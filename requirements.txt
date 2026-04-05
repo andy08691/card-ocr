@@ -3,8 +3,14 @@
 #
 # Apple Silicon ARM (recommended):
 #   pip install paddlepaddle==0.0.0 -f https://www.paddlepaddle.org.cn/whl/mac/cpu/develop.html
+#   pip install paddleocr==2.6.1.3 --no-deps
 #   pip install -r requirements-arm.txt
 #
 # Apple Silicon via Rosetta 2 (x86_64):
 #   pip install paddlepaddle==2.6.2 paddleocr==2.6.1.3 --no-deps
 #   pip install -r requirements-x86.txt
+#
+# Windows (x86_64):
+#   pip install paddlepaddle==3.0.0
+#   pip install paddleocr
+#   pip install -r requirements-windows.txt

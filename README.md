@@ -43,13 +43,33 @@ pip install paddleocr==2.6.1.3 --no-deps
 pip install -r requirements-arm.txt
 ```
 
+### 方式 C：Windows（x86_64，最新版模型）
+
+需求：Python 3.10–3.12 **64-bit**（從 [python.org](https://python.org) 下載，勿選 32-bit）
+
+確認 Python 為 64-bit：
+```cmd
+python -c "import struct; print(struct.calcsize('P')*8)"
+```
+應印出 `64`。
+
+```cmd
+python -m venv .venv
+.venv\Scripts\activate
+pip install paddlepaddle==3.0.0
+pip install paddleocr
+pip install -r requirements-windows.txt
+```
+
+> Windows 使用 PaddleOCR 3.x（PP-OCRv5 模型），準確率優於 macOS 的 2.x 版本。
+
 ### 啟動 Server
 
 ```bash
 uvicorn app.main:app --reload
 ```
 
-首次上傳圖片時，PaddleOCR 會自動下載模型（約 18MB），下載後快取至 `~/.paddleocr/`，之後不需重複下載。
+首次上傳圖片時，PaddleOCR 會自動下載模型，下載後快取至本機，之後不需重複下載。
 
 ---
 
@@ -123,9 +143,10 @@ card_ocr/
 ├── card_ocr.db          # SQLite 資料庫（git 忽略）
 ├── .venv/               # x86_64 虛擬環境（git 忽略）
 ├── .venv_arm/           # ARM 虛擬環境（git 忽略）
-├── requirements-arm.txt # ARM 安裝依賴（方式 B）
-├── requirements-x86.txt # x86 安裝依賴（方式 A）
-├── stop.sh              # 關閉 port 8000 的腳本
+├── requirements-arm.txt     # ARM 安裝依賴（方式 B）
+├── requirements-x86.txt     # x86 安裝依賴（方式 A）
+├── requirements-windows.txt # Windows 安裝依賴（方式 C）
+├── stop.sh                  # 關閉 port 8000 的腳本
 └── .env
 ```
 
@@ -202,6 +223,26 @@ pip install "numpy<2.0" "opencv-python<=4.6.0.66"
 ```bash
 pip install paddleocr==2.6.1.3 --no-deps
 ```
+
+---
+
+### ❌ Windows：`DLL load failed while importing` 或 import 失敗
+
+**原因：** 缺少 Visual C++ Runtime。
+
+**解法：** 安裝 [Visual C++ Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe)（vc_redist.x64.exe）後重新嘗試。
+
+---
+
+### ❌ Windows：安裝時提示 Python 不是 64-bit
+
+**原因：** PaddlePaddle 3.x 只有 64-bit wheel，32-bit Python 無法安裝。
+
+**確認方式：**
+```cmd
+python -c "import struct; print(struct.calcsize('P')*8)"
+```
+應印出 `64`。若印出 `32`，請重新從 [python.org](https://python.org) 下載 64-bit 版本。
 
 ---
 

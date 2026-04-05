@@ -1,0 +1,24 @@
+# Windows (x86_64) — Python 3.10–3.12 64-bit required
+# Step 1: pip install paddlepaddle==3.0.0
+# Step 2: pip install paddleocr   (latest 3.x — no --no-deps needed, PyMuPDF removed)
+# Step 3: pip install -r requirements-windows.txt
+
+# numpy: no upper bound needed for PaddlePaddle 3.x
+numpy>=1.24
+
+# opencv: 4.10.x compatible with numpy 2.x and required by paddleocr 3.x / paddlex
+opencv-python==4.10.0.84
+opencv-contrib-python==4.10.0.84
+
+fastapi
+uvicorn[standard]
+sqlalchemy
+python-multipart
+python-dotenv
+opencc-python-reimplemented
+
+pyclipper
+shapely
+tqdm
+requests
+pillow
