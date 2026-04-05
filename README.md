@@ -63,7 +63,7 @@ pip install -r requirements-windows.txt
 
 > Windows 使用 PaddleOCR 3.x（PP-OCRv5 模型），準確率優於 macOS 的 2.x 版本。
 
-### 啟動 Server
+### 啟動 Server（開發模式）
 
 ```bash
 uvicorn app.main:app --reload
@@ -73,9 +73,54 @@ uvicorn app.main:app --reload
 
 ---
 
+## 對外部署（供其他 Server 使用）
+
+此 OCR server 可直接在其他公司的機器上執行，讓他們的後端程式透過 HTTP 呼叫 API。
+
+### 設定
+
+複製 `.env.example` 為 `.env`：
+
+```bash
+cp .env.example .env   # macOS / Linux
+copy .env.example .env  # Windows
+```
+
+預設設定（可依需求修改）：
+
+```
+HOST=0.0.0.0   # 0.0.0.0 讓同機器或同網路的其他程式連得到
+PORT=8000      # 如果 8000 已被佔用，改成其他 port（例如 8080）
+```
+
+### 啟動
+
+**macOS / Linux：**
+```bash
+bash start.sh
+```
+
+**Windows：**
+```cmd
+start.bat
+```
+
+啟動後會顯示：`Starting OCR server on http://0.0.0.0:8000`
+
+### 關閉
+
+**macOS / Linux：**
+```bash
+bash stop.sh
+```
+
+**Windows：** 直接關閉終端機視窗，或按 `Ctrl+C`
+
+---
+
 ## API 使用方式
 
-啟動後開啟 Swagger UI：`http://localhost:8000/docs`
+啟動後 Swagger UI：`http://localhost:8000/docs`（可換成實際機器 IP 或自訂 PORT）
 
 ### POST `/api/cards/upload` — 上傳名片
 
@@ -146,8 +191,11 @@ card_ocr/
 ├── requirements-arm.txt     # ARM 安裝依賴（方式 B）
 ├── requirements-x86.txt     # x86 安裝依賴（方式 A）
 ├── requirements-windows.txt # Windows 安裝依賴（方式 C）
-├── stop.sh                  # 關閉 port 8000 的腳本
-└── .env
+├── start.sh                 # 正式啟動腳本（macOS / Linux）
+├── start.bat                # 正式啟動腳本（Windows）
+├── stop.sh                  # 關閉 port 8000 的腳本（macOS / Linux）
+├── .env.example             # 環境變數範本
+└── .env                     # 環境設定（git 忽略）
 ```
 
 ---
