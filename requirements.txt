@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+paddlepaddle==2.6.0
+paddleocr>=2.6rc
+sqlalchemy
+python-multipart
+python-dotenv
+pillow

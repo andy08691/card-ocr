@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.env
+media/
+card_ocr.db
+.venv/
+.venv_arm/
+venv/
+*.egg-info/
+dist/
+build/
+.DS_Store
+.claude/
+build.log

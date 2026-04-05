@@ -1,0 +1,17 @@
+services:
+  api:
+    build: .
+    platform: linux/amd64
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./media:/app/media
+      - ./card_ocr.db:/app/card_ocr.db
+      - paddleocr_models:/root/.paddleocr
+    environment:
+      - MEDIA_DIR=media
+      - DATABASE_URL=sqlite:///./card_ocr.db
+      - PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True
+
+volumes:
+  paddleocr_models:
