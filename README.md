@@ -22,43 +22,40 @@
 
 ## 安裝步驟
 
-### 1. 建立 ARM64 虛擬環境
+### 方式 A：直接安裝（Rosetta 2，較簡單）
+
+適用 Apple Silicon Mac，透過 Rosetta 2 跑 x86_64 版本：
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install paddlepaddle==2.6.2 paddleocr==2.6.1.3 --no-deps
+pip install "numpy<2.0" "opencv-python<=4.6.0.66" "opencv-contrib-python<=4.6.0.66" \
+    pyclipper shapely lmdb rapidfuzz imgaug scikit-image tqdm requests pillow
+pip install fastapi "uvicorn[standard]" sqlalchemy python-multipart python-dotenv \
+    opencc-python-reimplemented
+```
+
+### 方式 B：ARM 原生安裝（較快）
 
 ```bash
 /opt/homebrew/bin/python3.10 -m venv .venv_arm
-.venv_arm/bin/pip install --upgrade pip
+source .venv_arm/bin/activate
+pip install paddlepaddle==0.0.0 -f https://www.paddlepaddle.org.cn/whl/mac/cpu/develop.html
+pip install paddleocr==2.6.1.3 --no-deps
+pip install "numpy<2.0" "opencv-python<=4.6.0.66" "opencv-contrib-python<=4.6.0.66" \
+    pyclipper shapely lmdb rapidfuzz imgaug scikit-image tqdm requests pillow
+pip install fastapi "uvicorn[standard]" sqlalchemy python-multipart python-dotenv \
+    opencc-python-reimplemented
 ```
 
-### 2. 安裝 PaddlePaddle（ARM 版本）
-
-> ⚠️ PyPI 上的 `paddlepaddle` 沒有 ARM wheel，需從官方特定網址安裝 develop 版
+### 啟動 Server
 
 ```bash
-.venv_arm/bin/pip install paddlepaddle==0.0.0 -f https://www.paddlepaddle.org.cn/whl/mac/cpu/develop.html
+uvicorn app.main:app --reload
 ```
 
-### 3. 安裝 PaddleOCR 及其他依賴
-
-```bash
-.venv_arm/bin/pip install paddleocr==2.6.1.3 --no-deps
-.venv_arm/bin/pip install \
-    "numpy<2.0" \
-    "opencv-python<=4.6.0.66" \
-    "opencv-contrib-python<=4.6.0.66" \
-    pyclipper shapely lmdb rapidfuzz imgaug \
-    scikit-image tqdm requests pillow
-.venv_arm/bin/pip install \
-    fastapi "uvicorn[standard]" sqlalchemy \
-    python-multipart python-dotenv
-```
-
-### 4. 啟動 Server
-
-```bash
-.venv_arm/bin/uvicorn app.main:app --reload
-```
-
-首次啟動並上傳圖片時，PaddleOCR 會自動下載模型（約 18MB），下載後快取至 `~/.paddleocr/`，之後不需重複下載。
+首次上傳圖片時，PaddleOCR 會自動下載模型（約 18MB），下載後快取至 `~/.paddleocr/`，之後不需重複下載。
 
 ---
 
@@ -130,7 +127,7 @@ card_ocr/
 │       └── parser.py    # Regex + 規則解析欄位
 ├── media/               # 上傳的名片圖片（git 忽略）
 ├── card_ocr.db          # SQLite 資料庫（git 忽略）
-├── .venv_arm/           # ARM64 虛擬環境（git 忽略）
+├── .venv/               # 虛擬環境（git 忽略）
 ├── requirements.txt
 └── .env
 ```
@@ -143,27 +140,30 @@ card_ocr/
 
 **原因：** PyPI 的 `paddlepaddle` 只有 x86_64 wheel，在 Apple Silicon 上執行（即使透過 Docker `linux/amd64` 模擬）會因 AVX 指令集不相容而 crash。
 
-**解法：** 使用官方 ARM develop 版本安裝：
+**解法 1（簡單）：** 使用 Rosetta 2 + x86_64 Python 安裝一般版本：
 ```bash
+/usr/local/bin/python3 -m venv .venv   # x86_64 Python
+pip install paddlepaddle==2.6.2
+```
+
+**解法 2（ARM 原生）：** 使用官方 ARM develop 版本：
+```bash
+/opt/homebrew/bin/python3.10 -m venv .venv_arm
 pip install paddlepaddle==0.0.0 -f https://www.paddlepaddle.org.cn/whl/mac/cpu/develop.html
 ```
 
 ---
 
-### ❌ import paddle 卡住不動
+### ❌ import paddle 卡住不動（ARM Python + x86 wheel）
 
-**原因：** 使用了 x86_64 Python（`/usr/local/bin/python3`），即使安裝了 ARM paddle 也無法正常載入。
+**原因：** 用 ARM Python 安裝了 x86_64 的 paddlepaddle wheel，導致 import 卡死。
 
 **確認方式：**
 ```bash
-python3 -m platform
-# 必須顯示 arm64，例如：macOS-14.x-arm64-arm-64bit
+python3 -m platform   # 確認 Python 架構
 ```
 
-**解法：** 改用 ARM Homebrew Python：
-```bash
-/opt/homebrew/bin/python3.10 -m venv .venv_arm
-```
+**解法：** Python 與 paddlepaddle wheel 架構必須一致（都 x86 或都 ARM）。
 
 ---
 
