@@ -22,31 +22,25 @@
 
 ## 安裝步驟
 
-### 方式 A：直接安裝（Rosetta 2，較簡單）
+### 方式 A：Rosetta 2（x86_64，較簡單）
 
 適用 Apple Silicon Mac，透過 Rosetta 2 跑 x86_64 版本：
 
 ```bash
-python3 -m venv .venv
+/usr/local/bin/python3 -m venv .venv   # 確認使用 x86_64 Python
 source .venv/bin/activate
 pip install paddlepaddle==2.6.2 paddleocr==2.6.1.3 --no-deps
-pip install "numpy<2.0" "opencv-python<=4.6.0.66" "opencv-contrib-python<=4.6.0.66" \
-    pyclipper shapely lmdb rapidfuzz imgaug scikit-image tqdm requests pillow
-pip install fastapi "uvicorn[standard]" sqlalchemy python-multipart python-dotenv \
-    opencc-python-reimplemented
+pip install -r requirements-x86.txt
 ```
 
-### 方式 B：ARM 原生安裝（較快）
+### 方式 B：ARM 原生安裝（較快，推薦）
 
 ```bash
 /opt/homebrew/bin/python3.10 -m venv .venv_arm
 source .venv_arm/bin/activate
 pip install paddlepaddle==0.0.0 -f https://www.paddlepaddle.org.cn/whl/mac/cpu/develop.html
 pip install paddleocr==2.6.1.3 --no-deps
-pip install "numpy<2.0" "opencv-python<=4.6.0.66" "opencv-contrib-python<=4.6.0.66" \
-    pyclipper shapely lmdb rapidfuzz imgaug scikit-image tqdm requests pillow
-pip install fastapi "uvicorn[standard]" sqlalchemy python-multipart python-dotenv \
-    opencc-python-reimplemented
+pip install -r requirements-arm.txt
 ```
 
 ### 啟動 Server
@@ -127,8 +121,11 @@ card_ocr/
 │       └── parser.py    # Regex + 規則解析欄位
 ├── media/               # 上傳的名片圖片（git 忽略）
 ├── card_ocr.db          # SQLite 資料庫（git 忽略）
-├── .venv/               # 虛擬環境（git 忽略）
-├── requirements.txt
+├── .venv/               # x86_64 虛擬環境（git 忽略）
+├── .venv_arm/           # ARM 虛擬環境（git 忽略）
+├── requirements-arm.txt # ARM 安裝依賴（方式 B）
+├── requirements-x86.txt # x86 安裝依賴（方式 A）
+├── stop.sh              # 關閉 port 8000 的腳本
 └── .env
 ```
 
@@ -193,6 +190,17 @@ pip install imgaug
 **解法：** 安裝 `opencv-python<=4.6.0.66` 並鎖定 numpy：
 ```bash
 pip install "numpy<2.0" "opencv-python<=4.6.0.66"
+```
+
+---
+
+### ❌ `Failed building wheel for PyMuPDF` / `swig not found`
+
+**原因：** `pip install paddleocr==2.6.1.3`（不加 `--no-deps`）會嘗試安裝 paddleocr 所有依賴，包含 `PyMuPDF`，而 PyMuPDF 需要系統工具 `swig` 才能編譯，一般環境沒有安裝。
+
+**解法：** paddleocr 必須加 `--no-deps` 安裝，PDF 相關依賴不影響名片 OCR 功能：
+```bash
+pip install paddleocr==2.6.1.3 --no-deps
 ```
 
 ---

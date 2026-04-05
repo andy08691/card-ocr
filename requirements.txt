@@ -1,8 +1,10 @@
-fastapi
-uvicorn[standard]
-paddlepaddle==2.6.0
-paddleocr>=2.6rc
-sqlalchemy
-python-multipart
-python-dotenv
-pillow
+# PaddlePaddle installation differs by platform — do NOT use this file directly.
+# See README.md for full install instructions.
+#
+# Apple Silicon ARM (recommended):
+#   pip install paddlepaddle==0.0.0 -f https://www.paddlepaddle.org.cn/whl/mac/cpu/develop.html
+#   pip install -r requirements-arm.txt
+#
+# Apple Silicon via Rosetta 2 (x86_64):
+#   pip install paddlepaddle==2.6.2 paddleocr==2.6.1.3 --no-deps
+#   pip install -r requirements-x86.txt
