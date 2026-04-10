@@ -21,8 +21,8 @@ EN_TEL_LABEL_RE = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 EN_MOBILE_LABEL_RE = re.compile(
-    r"(?:Mobile|Cell(?:ular)?|M|Mob|手機)\s*[\.:\|]\s*([\+\d][\d\s.\-\(\)]{6,})",
-    re.IGNORECASE,
+    r"^(?:Mobile|Cell(?:ular)?|M|Mob|手機)\s*[\.:\|]?\s*([\+\d][\d\s.\-\(\)]{6,})",
+    re.IGNORECASE | re.MULTILINE,
 )
 EN_FAX_LABEL_RE = re.compile(
     r"(?:Fax|F)\s*[\.:\|]\s*([\+\d][\d\s.\-\(\)]{6,})",
@@ -42,13 +42,13 @@ ZH_COMPANY_MAIN_SUFFIXES = re.compile(
 )
 # 分店 suffix（降低優先序）
 ZH_COMPANY_BRANCH_SUFFIXES = re.compile(
-    r"(加盟店|直營店|捷運店|營業所|分行|分店|門市)"
+    r"(加盟店|直營店|捷運店|營業所|管業所|分行|分店|門市)"
 )
 # 合併（用於標記 used）
 ZH_COMPANY_SUFFIXES = re.compile(
     r"(股份有限公司|有限公司|集團|控股|企業|工業|科技|事務所|辦事處|分公司"
     r"|房屋|仲介|地產|建設|保險|金融|銀行|證券|投資|顧問公司"
-    r"|加盟店|直營店|捷運店|營業所|分行|分店|門市)"
+    r"|加盟店|直營店|捷運店|營業所|管業所|分行|分店|門市)"
 )
 ZH_ADDRESS_RE = re.compile(
     r"[\d\s]*[\u4e00-\u9fff]*(市|縣|區|鄉|鎮)([\u4e00-\u9fff0-9\s,#段-]*(路|街|巷|弄|號|樓|棟)[0-9\u4e00-\u9fff]*)"
@@ -70,8 +70,8 @@ ZH_JOB_TITLE_KEYWORDS = [
 # ── English card patterns ─────────────────────────────────────────────────────
 
 EN_COMPANY_SUFFIXES = re.compile(
-    r"\b(Corp\.?|Inc\.?|Ltd\.?|LLC|Co\.?|Group|Holdings|Technologies|Solutions"
-    r"|Consulting|Associates|Realty|Real\s*Estate)\b",
+    r"\b(Corp\.?|Inc\.?|Ltd\.?|Limited|LLC|Co\.?|Group|Holdings|Technologies|Solutions"
+    r"|Consulting|Associates|Realty|Real\s*Estate|Oy|GmbH|AG|SA|SpA|AB|NV|BV|Pte\.?)\b",
     re.IGNORECASE,
 )
 EN_ADDRESS_RE = re.compile(
@@ -85,8 +85,10 @@ EN_JOB_TITLE_KEYWORDS = [
     "Analyst", "Advisor", "Associate", "Executive", "Officer", "Lead", "Head",
     "Specialist", "Coordinator", "Representative", "Agent",
 ]
-# Matches Title Case ("Nancy Hoo") and ALL CAPS ("NANCY HOO"), with optional middle initial
-EN_NAME_RE = re.compile(r"^[A-Z][a-zA-Z'-]+(?:\s+[A-Z]\.?)?\s+[A-Z][a-zA-Z'-]+$")
+# Matches Title Case / ALL CAPS, 2–3 words, optional middle initial
+EN_NAME_RE = re.compile(
+    r"^[A-Z][a-zA-Z'-]+(?:\s+[A-Z][a-zA-Z'-]*\.?)?(?:\s+[A-Z][a-zA-Z'-]*\.?)?\s+[A-Z][a-zA-Z'-]+$"
+)
 
 # Nickname pattern: 童敏惠（小敏）→ strip （...）
 NICKNAME_RE = re.compile(r"[（(][\u4e00-\u9fff\w]+[）)]")
@@ -141,17 +143,29 @@ def _extract_mobile(text: str) -> Optional[str]:
 
 
 def _extract_phone(text: str) -> Optional[str]:
-    # Strip fax lines
-    lines_without_fax = "\n".join(
-        line for line in text.splitlines()
-        if not re.search(r"傳真|Fax|FAX", line, re.IGNORECASE)
-        and not EN_FAX_LABEL_RE.match(line.strip())
-    )
+    # Strip fax: for lines that contain a fax label, remove the fax portion rather than
+    # dropping the whole line (handles "Tel:03-3497-8076Fax:03-3497-2258" style)
+    processed_lines = []
+    for line in text.splitlines():
+        if re.search(r"傳真|Fax|FAX", line, re.IGNORECASE):
+            # Remove fax number + everything after it
+            stripped = re.sub(r"(?:傳真|Fax|FAX)\s*[：:\|]?\s*[\d\s.\-\(\)\+]+", "", line, flags=re.IGNORECASE).strip()
+            if stripped:
+                processed_lines.append(stripped)
+        else:
+            processed_lines.append(line)
+    lines_without_fax = "\n".join(processed_lines)
 
     # International format (+country code)
+    mobile_pre = _extract_mobile(text)
+    mobile_digits_pre = re.sub(r"\D", "", mobile_pre) if mobile_pre else ""
     m = PHONE_INTL_RE.search(lines_without_fax)
     if m:
-        return m.group(0).strip()
+        candidate = m.group(0).strip()
+        cdigits = re.sub(r"\D", "", candidate)
+        # Skip if this is just a prefix of the mobile number (partial INTL match on mobile line)
+        if not mobile_digits_pre or not mobile_digits_pre.startswith(cdigits):
+            return candidate
 
     # Taiwan landline
     for m in PHONE_TW_RE.finditer(lines_without_fax):
@@ -168,6 +182,8 @@ def _extract_phone(text: str) -> Optional[str]:
     for m in EN_PHONE_GENERAL_RE.finditer(lines_without_fax):
         digits = re.sub(r"\D", "", m.group(1))
         if not digits.startswith("09") and 7 <= len(digits) <= 15:
+            if mobile_digits_pre and (digits == mobile_digits_pre or mobile_digits_pre.startswith(digits)):
+                continue
             return m.group(1).strip()
 
     return None
@@ -201,9 +217,11 @@ def _parse_zh(raw_text: str, lines: list) -> dict:
         if ZH_COMPANY_BRANCH_SUFFIXES.search(line):
             used.add(i)  # mark as used but don't override main company
 
-    # Job title: line containing known keywords
+    # Job title: line containing known keywords; skip number-heavy lines (hotlines, phone rows)
     for i, line in enumerate(lines):
         if i in used:
+            continue
+        if re.search(r"\d{4,}", line):  # skip lines with long digit sequences (phone numbers)
             continue
         for kw in ZH_JOB_TITLE_KEYWORDS:
             if kw in line:
@@ -272,8 +290,18 @@ def _parse_en(raw_text: str, lines: list) -> dict:
 
     used = set()
 
+    # 0. Pre-mark lines that are purely email or website so they don't get captured as company
+    _email_only = re.compile(r"^[\w.+-]+@[\w.-]+\.[a-zA-Z]{2,}$", re.IGNORECASE)
+    _web_only = re.compile(r"^(https?://\S+|www\.\S+)$", re.IGNORECASE)
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if _email_only.match(stripped) or _web_only.match(stripped):
+            used.add(i)
+
     # 1. Company: lines with known corporate suffixes
     for i, line in enumerate(lines):
+        if i in used:
+            continue
         if EN_COMPANY_SUFFIXES.search(line):
             if result["company_name"] is None:
                 result["company_name"] = line
