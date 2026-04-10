@@ -14,10 +14,11 @@ WEBSITE_RE = re.compile(r"(https?://\S+|www\.\S+)", re.IGNORECASE)
 FAX_LINE_RE = re.compile(r"傳真[：:]\s*([\S]+)")  # 傳真標籤
 
 # English label-based phone extraction
-# Matches: "Tel: 852-1234-5678", "Office: (555) 123-4567", "T: +1 234 567 8900"
+# Uses MULTILINE so ^ anchors to line start — prevents "Head Office:..." from matching
+# Separator is optional to handle OCR merging (e.g. "Office604.960.3231")
 EN_TEL_LABEL_RE = re.compile(
-    r"(?:Tel(?:ephone)?|Phone|Ph|Office|Work|O|T)\s*[\.:\|]\s*([\+\d][\d\s.\-\(\)]{6,})",
-    re.IGNORECASE,
+    r"^(?:Tel(?:ephone)?|Phone|Ph|Office|Work|O|T)\s*[\.:\|]?\s*([\+\d][\d\s.\-\(\)]{6,})",
+    re.IGNORECASE | re.MULTILINE,
 )
 EN_MOBILE_LABEL_RE = re.compile(
     r"(?:Mobile|Cell(?:ular)?|M|Mob|手機)\s*[\.:\|]\s*([\+\d][\d\s.\-\(\)]{6,})",
@@ -74,7 +75,8 @@ EN_COMPANY_SUFFIXES = re.compile(
     re.IGNORECASE,
 )
 EN_ADDRESS_RE = re.compile(
-    r"\d+\s+[\w\s]+(Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr|Lane|Ln|Way|Court|Ct)[\w\s,#.]*",
+    r"\d[\d\-]*\s+[\w\s]+(Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr"
+    r"|Lane|Ln|Way|Court|Ct|Highway|Hwy|Parkway|Pkwy|Plaza|Square|Sq)[\w\s,#.]*",
     re.IGNORECASE,
 )
 EN_JOB_TITLE_KEYWORDS = [
@@ -83,7 +85,8 @@ EN_JOB_TITLE_KEYWORDS = [
     "Analyst", "Advisor", "Associate", "Executive", "Officer", "Lead", "Head",
     "Specialist", "Coordinator", "Representative", "Agent",
 ]
-EN_NAME_RE = re.compile(r"^[A-Z][a-z]+(?:\s+[A-Z]\.?)?\s+[A-Z][a-z]+$")
+# Matches Title Case ("Nancy Hoo") and ALL CAPS ("NANCY HOO"), with optional middle initial
+EN_NAME_RE = re.compile(r"^[A-Z][a-zA-Z'-]+(?:\s+[A-Z]\.?)?\s+[A-Z][a-zA-Z'-]+$")
 
 # Nickname pattern: 童敏惠（小敏）→ strip （...）
 NICKNAME_RE = re.compile(r"[（(][\u4e00-\u9fff\w]+[）)]")
@@ -243,6 +246,19 @@ def _parse_zh(raw_text: str, lines: list) -> dict:
     return result
 
 
+# Strip common English address label prefixes (e.g. "Head Office: ", "Address: ")
+_EN_ADDR_LABEL_RE = re.compile(
+    r"^(?:Head\s+)?(?:Office|Address|Addr|Location|HQ|Headquarters)\s*[:\s]+",
+    re.IGNORECASE,
+)
+# Canadian/US city-province/state-postal pattern for multi-line address concat
+_EN_CITY_LINE_RE = re.compile(
+    r"[A-Za-z\s]+,\s*[A-Z]{2}|\b[A-Z]\d[A-Z]\s*\d[A-Z]\d\b|\b\d{5}(?:-\d{4})?\b"
+)
+# All-caps brand name (single word or brand with apostrophe/hyphen, ≤ 3 words)
+_EN_BRAND_RE = re.compile(r"^[A-Z][A-Z0-9'.\-]+(?:\s+[A-Z][A-Z0-9'.\-]+){0,2}$")
+
+
 # ── English card parser ───────────────────────────────────────────────────────
 
 def _parse_en(raw_text: str, lines: list) -> dict:
@@ -256,12 +272,14 @@ def _parse_en(raw_text: str, lines: list) -> dict:
 
     used = set()
 
+    # 1. Company: lines with known corporate suffixes
     for i, line in enumerate(lines):
         if EN_COMPANY_SUFFIXES.search(line):
             if result["company_name"] is None:
                 result["company_name"] = line
             used.add(i)
 
+    # 2. Job title
     for i, line in enumerate(lines):
         if i in used:
             continue
@@ -274,14 +292,23 @@ def _parse_en(raw_text: str, lines: list) -> dict:
         if result["job_title"]:
             break
 
+    # 3. Address — strip label prefix, concat next line if city/postal
     for i, line in enumerate(lines):
         if i in used:
             continue
-        if EN_ADDRESS_RE.search(line):
-            result["address"] = line
+        clean = _EN_ADDR_LABEL_RE.sub("", line).strip()
+        if EN_ADDRESS_RE.search(clean):
+            # Try to append the next line if it looks like city/province/zip
+            if i + 1 < len(lines) and (i + 1) not in used:
+                next_line = lines[i + 1]
+                if _EN_CITY_LINE_RE.search(next_line):
+                    clean = clean + ", " + next_line
+                    used.add(i + 1)
+            result["address"] = clean
             used.add(i)
             break
 
+    # 4. Person name — detect before company fallback so all-caps names are marked used
     for i, line in enumerate(lines):
         if i in used:
             continue
@@ -290,5 +317,16 @@ def _parse_en(raw_text: str, lines: list) -> dict:
             result["english_name"] = line
             used.add(i)
             break
+
+    # 5. Company fallback: all-caps brand name (e.g. "ARC'TERYX", "NIKE")
+    if result["company_name"] is None:
+        for i, line in enumerate(lines):
+            if i in used:
+                continue
+            stripped = line.strip()
+            if _EN_BRAND_RE.match(stripped) and len(stripped) <= 30:
+                result["company_name"] = stripped
+                used.add(i)
+                break
 
     return result
