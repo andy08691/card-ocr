@@ -11,6 +11,7 @@ class CardBase(BaseModel):
     email: Optional[str] = None
     phone: Optional[str] = None
     mobile: Optional[str] = None
+    fax: Optional[str] = None
     address: Optional[str] = None
     website: Optional[str] = None
 

@@ -1,8 +1,16 @@
+import logging
 import re
+import time
 from typing import Optional
+from PIL import Image
 from paddleocr import PaddleOCR
 import paddleocr as _paddleocr_mod
 import opencc
+
+logger = logging.getLogger(__name__)
+
+# Resize images larger than this dimension before OCR to reduce memory and improve speed
+_MAX_OCR_PIXELS = 3000
 
 _converter = opencc.OpenCC("s2twp")  # Simplified → Traditional Taiwan
 
@@ -65,6 +73,18 @@ def _detect_language(text: str) -> str:
     return "zh" if ratio > 0.2 else "en"
 
 
+def _resize_if_needed(image_path: str) -> None:
+    """Downscale the image in-place if either dimension exceeds _MAX_OCR_PIXELS."""
+    img = Image.open(image_path)
+    w, h = img.size
+    if max(w, h) > _MAX_OCR_PIXELS:
+        scale = _MAX_OCR_PIXELS / max(w, h)
+        new_w, new_h = int(w * scale), int(h * scale)
+        img = img.resize((new_w, new_h), Image.LANCZOS)
+        img.save(image_path)
+        logger.info("Resized image %s from %dx%d to %dx%d", image_path, w, h, new_w, new_h)
+
+
 def run_ocr(image_path: str) -> dict:
     """
     Run OCR on the given image path.
@@ -74,6 +94,10 @@ def run_ocr(image_path: str) -> dict:
       - boxes: list of (text, bbox, confidence)
       - lang: detected language
     """
+    _resize_if_needed(image_path)
+
+    t0 = time.monotonic()
+
     # First pass with Chinese model (handles mixed zh/en well)
     ocr = _get_ocr("zh")
     boxes = _extract_boxes(ocr, image_path)
@@ -90,17 +114,24 @@ def run_ocr(image_path: str) -> dict:
     lang = _detect_language(raw_text)
 
     # Re-run with English model if pure English card for better accuracy
+    # English model gets a slight edge on ties (threshold -0.01) to prefer dedicated model
     if lang == "en":
         ocr_en = _get_ocr("en")
         boxes_en = _extract_boxes(ocr_en, image_path)
         if boxes_en:
             confidences_en = [b["confidence"] for b in boxes_en]
             avg_en = sum(confidences_en) / len(confidences_en)
-            if avg_en >= avg_confidence:
+            if avg_en > avg_confidence - 0.01:
                 boxes = boxes_en
                 confidences = confidences_en
                 raw_text = "\n".join(b["text"] for b in boxes)
                 avg_confidence = avg_en
+
+    elapsed = time.monotonic() - t0
+    logger.info(
+        "OCR done: lang=%s confidence=%.4f boxes=%d time=%.2fs path=%s",
+        lang, avg_confidence, len(boxes), elapsed, image_path,
+    )
 
     return {
         "raw_text": raw_text,

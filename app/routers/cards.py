@@ -1,8 +1,11 @@
+import logging
 import os
 import uuid
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 from app.database import get_db
 from app.models.card import Card
@@ -31,18 +34,23 @@ async def upload_card(file: UploadFile = File(...), db: Session = Depends(get_db
     os.makedirs(MEDIA_DIR, exist_ok=True)
 
     contents = await file.read()
+    logger.info("Received upload: %s (%d bytes)", file.filename, len(contents))
     with open(image_path, "wb") as f:
         f.write(contents)
 
-    # Run OCR in thread pool (blocking operation)
-    ocr_result = await run_in_threadpool(run_ocr, image_path)
-
-    # Parse structured fields
-    parsed = parse_card(
-        raw_text=ocr_result["raw_text"],
-        boxes=ocr_result["boxes"],
-        lang=ocr_result["lang"],
-    )
+    # Run OCR + parse in thread pool; clean up image on failure
+    try:
+        ocr_result = await run_in_threadpool(run_ocr, image_path)
+        parsed = parse_card(
+            raw_text=ocr_result["raw_text"],
+            boxes=ocr_result["boxes"],
+            lang=ocr_result["lang"],
+        )
+    except Exception as exc:
+        if os.path.exists(image_path):
+            os.remove(image_path)
+        logger.exception("OCR/parse failed for %s", image_path)
+        raise HTTPException(status_code=422, detail=f"OCR processing failed: {exc}")
 
     # Save to DB
     card = Card(

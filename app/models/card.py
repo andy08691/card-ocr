@@ -14,6 +14,7 @@ class Card(Base):
     email = Column(String, nullable=True)
     phone = Column(String, nullable=True)
     mobile = Column(String, nullable=True)
+    fax = Column(String, nullable=True)
     address = Column(String, nullable=True)
     website = Column(String, nullable=True)
     raw_text = Column(String, nullable=True)

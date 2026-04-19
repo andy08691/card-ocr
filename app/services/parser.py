@@ -7,11 +7,12 @@ from typing import Optional
 EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\.[a-zA-Z]{2,}", re.IGNORECASE)
 MOBILE_TW_RE = re.compile(r"09\d{2}[-\s]?\d{3}[-\s]?\d{3}")
 # Phone: (02)2326-2888 / (02) 8666-8800 / 07-782 7271 / 04-2326-2888
-PHONE_TW_RE = re.compile(r"[\(（]?0\d{1,2}[\)） ]\s*[-\s]?\d{3,4}[-\s]?\d{4}")
+# Requires one separator char (paren, dash, or space) after the area code to avoid false matches
+PHONE_TW_RE = re.compile(r"[\(（]?0\d{1,2}[\)）\-\s]\s*\d{3,4}[-\s]?\d{4}")
 PHONE_INTL_RE = re.compile(r"\+\d{1,3}[\s.-]?\(?\d{1,4}\)?[\s.-]?\d{3,9}")
 PHONE_FREE_RE = re.compile(r"0800[-\s]?\d{3}[-\s]?\d{3}")  # 0800 免費電話
-WEBSITE_RE = re.compile(r"(https?://\S+|www\.\S+)", re.IGNORECASE)
-FAX_LINE_RE = re.compile(r"傳真[：:]\s*([\S]+)")  # 傳真標籤
+WEBSITE_RE = re.compile(r"(https?://[^\s>\"',!]+|www\.[^\s>\"',!]+)", re.IGNORECASE)
+FAX_ZH_RE = re.compile(r"傳真\s*[：:]?\s*([\+\d][\d\s.\-\(\)]{5,}\d)")  # 傳真標籤
 
 # English label-based phone extraction
 # Uses MULTILINE so ^ anchors to line start — prevents "Head Office:..." from matching
@@ -76,7 +77,8 @@ EN_COMPANY_SUFFIXES = re.compile(
 )
 EN_ADDRESS_RE = re.compile(
     r"\d[\d\-]*\s+[\w\s]+(Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr"
-    r"|Lane|Ln|Way|Court|Ct|Highway|Hwy|Parkway|Pkwy|Plaza|Square|Sq)[\w\s,#.]*",
+    r"|Lane|Ln|Way|Court|Ct|Highway|Hwy|Parkway|Pkwy|Plaza|Square|Sq"
+    r"|Suite|Ste|Floor|Unit)[\w\s,#.]*",
     re.IGNORECASE,
 )
 EN_JOB_TITLE_KEYWORDS = [
@@ -84,6 +86,9 @@ EN_JOB_TITLE_KEYWORDS = [
     "Director", "Manager", "Supervisor", "Engineer", "Designer", "Consultant",
     "Analyst", "Advisor", "Associate", "Executive", "Officer", "Lead", "Head",
     "Specialist", "Coordinator", "Representative", "Agent",
+    "Founder", "Co-Founder", "Partner", "Principal", "Chairman",
+    "Secretary", "Treasurer", "Accountant", "Developer", "Architect",
+    "Marketing", "Sales", "Procurement", "Buyer", "Planner",
 ]
 # Matches Title Case / ALL CAPS, 2–3 words, optional middle initial
 EN_NAME_RE = re.compile(
@@ -105,6 +110,7 @@ def parse_card(raw_text: str, boxes: list, lang: str = "zh") -> dict:
         "email": _extract_email(raw_text),
         "mobile": _extract_mobile(raw_text),
         "phone": _extract_phone(raw_text),
+        "fax": _extract_fax(raw_text),
         "website": _extract_website(raw_text),
     }
 
@@ -189,6 +195,18 @@ def _extract_phone(text: str) -> Optional[str]:
     return None
 
 
+def _extract_fax(text: str) -> Optional[str]:
+    # Chinese fax label
+    m = FAX_ZH_RE.search(text)
+    if m:
+        return m.group(1).strip()
+    # English fax label
+    m = EN_FAX_LABEL_RE.search(text)
+    if m:
+        return m.group(1).strip()
+    return None
+
+
 def _extract_website(text: str) -> Optional[str]:
     m = WEBSITE_RE.search(text)
     return m.group(0) if m else None
@@ -217,11 +235,11 @@ def _parse_zh(raw_text: str, lines: list) -> dict:
         if ZH_COMPANY_BRANCH_SUFFIXES.search(line):
             used.add(i)  # mark as used but don't override main company
 
-    # Job title: line containing known keywords; skip number-heavy lines (hotlines, phone rows)
+    # Job title: line containing known keywords; skip phone-like lines (hotlines)
     for i, line in enumerate(lines):
         if i in used:
             continue
-        if re.search(r"\d{4,}", line):  # skip lines with long digit sequences (phone numbers)
+        if re.search(r"\d[\d\s.\-\(\)]{5,}\d", line):  # looks like a phone number sequence
             continue
         for kw in ZH_JOB_TITLE_KEYWORDS:
             if kw in line:
@@ -341,6 +359,10 @@ def _parse_en(raw_text: str, lines: list) -> dict:
         if i in used:
             continue
         if EN_NAME_RE.match(line):
+            # Secondary guard: skip if line contains a job title keyword (e.g. "Senior Engineer")
+            upper = line.upper()
+            if any(kw.upper() in upper for kw in EN_JOB_TITLE_KEYWORDS):
+                continue
             result["person_name"] = line
             result["english_name"] = line
             used.add(i)
@@ -352,7 +374,7 @@ def _parse_en(raw_text: str, lines: list) -> dict:
             if i in used:
                 continue
             stripped = line.strip()
-            if _EN_BRAND_RE.match(stripped) and len(stripped) <= 30:
+            if _EN_BRAND_RE.match(stripped) and len(stripped) <= 40:
                 result["company_name"] = stripped
                 used.add(i)
                 break
