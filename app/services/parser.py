@@ -70,9 +70,12 @@ ZH_JOB_TITLE_KEYWORDS = [
 
 # ── English card patterns ─────────────────────────────────────────────────────
 
+# Leading boundary accepts both real word boundaries AND direct suffix after uppercase/digit
+# (handles OCR-merged cases like "OSCLimited" where \b fails between C and L)
 EN_COMPANY_SUFFIXES = re.compile(
-    r"\b(Corp\.?|Inc\.?|Ltd\.?|Limited|LLC|Co\.?|Group|Holdings|Technologies|Solutions"
-    r"|Consulting|Associates|Realty|Real\s*Estate|Oy|GmbH|AG|SA|SpA|AB|NV|BV|Pte\.?)\b",
+    r"(?:\b|(?<=[A-Z0-9]))(Corp\.?|Inc\.?|Ltd\.?|Limited|LLC|Co\.?|Group|Holdings"
+    r"|Technologies|Solutions|Consulting|Associates|Realty|Real\s*Estate"
+    r"|Oy|GmbH|AG|SA|SpA|AB|NV|BV|Pte\.?)(?:\b|$)",
     re.IGNORECASE,
 )
 EN_ADDRESS_RE = re.compile(
@@ -97,6 +100,39 @@ EN_NAME_RE = re.compile(
 
 # Nickname pattern: 童敏惠（小敏）→ strip （...）
 NICKNAME_RE = re.compile(r"[（(][\u4e00-\u9fff\w]+[）)]")
+
+# Personal email providers — excluded from company-domain inference
+_PERSONAL_DOMAINS = {
+    "gmail", "yahoo", "hotmail", "outlook", "icloud", "qq",
+    "163", "126", "live", "msn", "protonmail", "zoho",
+}
+
+
+def _normalize_company(line: str) -> str:
+    """Insert space before OCR-merged company suffix, e.g. 'OSCLimited' → 'OSC Limited'."""
+    return re.sub(
+        r"(?<=[A-Z0-9])(Corp\.?|Inc\.?|Ltd\.?|Limited|LLC|Co\.?|Oy|GmbH|AG|SA|SpA|AB|NV|BV|Pte\.?)\b",
+        r" \1",
+        line,
+    )
+
+
+def _company_from_email_domain(email: str) -> Optional[str]:
+    """Derive a company name hint from the email domain as a last resort.
+    e.g. ian.christian@sprayway.com → 'Sprayway'
+         woo@nepa.co.kr → 'Nepa'
+    Returns None for personal providers (gmail, yahoo, etc.)
+    """
+    if not email or "@" not in email:
+        return None
+    domain = email.split("@")[1].lower()
+    # Strip second-level ccTLD patterns: co.kr, co.uk, com.tw, com.au, org.uk, etc.
+    domain = re.sub(r"\.(co|com|org|net|edu)\.[a-z]{2}$", "", domain)
+    # Strip final TLD to get the registrable name
+    name = domain.rsplit(".", 1)[0]
+    if name in _PERSONAL_DOMAINS:
+        return None
+    return name.capitalize()
 
 
 # ── Main parser ───────────────────────────────────────────────────────────────
@@ -316,13 +352,17 @@ def _parse_en(raw_text: str, lines: list) -> dict:
         if _email_only.match(stripped) or _web_only.match(stripped):
             used.add(i)
 
+    # Derive email local key for OCR-merge guard (used in steps 4b and 5)
+    email_str = _extract_email(raw_text) or ""
+    email_local_key = re.sub(r"[.\-_+]", "", email_str.split("@")[0]).lower() if email_str else ""
+
     # 1. Company: lines with known corporate suffixes
     for i, line in enumerate(lines):
         if i in used:
             continue
         if EN_COMPANY_SUFFIXES.search(line):
             if result["company_name"] is None:
-                result["company_name"] = line
+                result["company_name"] = _normalize_company(line)
             used.add(i)
 
     # 2. Job title
@@ -368,15 +408,35 @@ def _parse_en(raw_text: str, lines: list) -> dict:
             used.add(i)
             break
 
+    # 4b. Person name fallback: infer from email local part when OCR merged the name
+    # e.g. ian.christian@sprayway.com → "Ian Christian"
+    if result["person_name"] is None and email_str and "@" in email_str:
+        local = email_str.split("@")[0]
+        parts = re.split(r"[._\-+]", local)
+        parts = [p for p in parts if len(p) >= 2 and p.isalpha()]
+        if 2 <= len(parts) <= 3:
+            inferred = " ".join(p.capitalize() for p in parts)
+            result["person_name"] = inferred
+            result["english_name"] = inferred
+
     # 5. Company fallback: all-caps brand name (e.g. "ARC'TERYX", "NIKE")
+    # Skip tokens that match the email local part — those are OCR-merged person names
     if result["company_name"] is None:
         for i, line in enumerate(lines):
             if i in used:
                 continue
             stripped = line.strip()
             if _EN_BRAND_RE.match(stripped) and len(stripped) <= 40:
+                candidate_key = re.sub(r"\s", "", stripped).lower()
+                if email_local_key and candidate_key == email_local_key:
+                    continue  # OCR-merged person name, not a brand
                 result["company_name"] = stripped
                 used.add(i)
                 break
+
+    # 6. Company last-resort fallback: infer from email domain
+    # e.g. sprayway.com → "Sprayway"  (personal providers like gmail are excluded)
+    if result["company_name"] is None:
+        result["company_name"] = _company_from_email_domain(email_str)
 
     return result

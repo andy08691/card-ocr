@@ -268,8 +268,10 @@ class TestParseEn:
         assert r["person_name"] == "Woo Jeong Hong"
 
     def test_email_not_company(self):
+        # Email line itself should not be captured as company; domain fallback gives "Nepa"
         r = en_parse(["Woo Jeong Hong", "Senior Specialist", "Ewhong@nepa.co.kr"])
-        assert r["company_name"] is None
+        assert r["company_name"] != "Ewhong@nepa.co.kr"  # email address itself is not company
+        assert r["company_name"] == "Nepa"               # domain fallback is acceptable
         assert r["email"] == "Ewhong@nepa.co.kr"
 
     def test_all_caps_brand_fallback(self):
@@ -304,3 +306,72 @@ class TestParseEn:
         r = en_parse(["ACME Corp", "Jane Smith", "123 Main Street Suite 400", "Vancouver, BC V6B 1A1"])
         assert r["address"] is not None
         assert "Main Street" in r["address"]
+
+
+# ── OCR-merged fixes (Fix A/B/C/D) ───────────────────────────────────────────
+
+class TestOcrMergeFixes:
+    def test_ocr_merged_company_suffix(self):
+        # "OSCLimited" → company_name should be "OSC Limited" (Fix A)
+        r = en_parse(["OSCLimited", "Ian Christian", "Brand Director"])
+        assert r["company_name"] == "OSC Limited"
+
+    def test_ocr_merged_company_suffix_corp(self):
+        # "ACMECorp" → "ACME Corp"
+        r = en_parse(["ACMECorp", "Jane Smith", "Manager"])
+        assert r["company_name"] == "ACME Corp"
+
+    def test_brand_fallback_skips_email_local(self):
+        # "IANCHRISTIAN" matches brand regex but matches email local part → skip (Fix B)
+        r = en_parse(["IANCHRISTIAN", "Brand Director", "ian.christian@sprayway.com"])
+        assert r["company_name"] != "IANCHRISTIAN"
+
+    def test_person_name_from_email_local(self):
+        # No proper name line, but email encodes the name (Fix C)
+        r = en_parse(["Brand Director", "ian.christian@sprayway.com"])
+        assert r["person_name"] == "Ian Christian"
+        assert r["english_name"] == "Ian Christian"
+
+    def test_person_name_3part_from_email(self):
+        r = en_parse(["Senior Specialist", "woo.jeong.hong@nepa.co.kr"])
+        assert r["person_name"] == "Woo Jeong Hong"
+
+    def test_company_from_email_domain(self):
+        # No company suffix detected anywhere — fall back to domain (Fix D)
+        r = en_parse(["Brand Director", "ian.christian@sprayway.com"])
+        assert r["company_name"] == "Sprayway"
+
+    def test_company_domain_excluded_gmail(self):
+        # gmail is a personal provider, should not become company_name
+        r = en_parse(["Jane Doe", "john.doe@gmail.com"])
+        assert r["company_name"] is None
+
+    def test_company_domain_excluded_yahoo(self):
+        r = en_parse(["Jane Doe", "jane.doe@yahoo.com"])
+        assert r["company_name"] is None
+
+    def test_real_company_wins_over_domain(self):
+        # OSC Limited detected via suffix → domain fallback should NOT override
+        r = en_parse(["OSCLimited", "Brand Director", "ian.christian@sprayway.com"])
+        assert r["company_name"] == "OSC Limited"  # suffix wins over domain
+
+    def test_full_ian_christian_card(self):
+        # Full simulation of the problem card's raw_text
+        lines = [
+            "IANCHRISTIAN",
+            "Brand Director",
+            "E:ian.christian@sprayway.com",
+            "M0044(07875355654",
+            "SPRAY",
+            "WAY",
+            "Trekmates",
+            "ObOz",
+            "zempirel",
+            "OSCLimited",
+            "Redfern House,Dawson Street,Hyde,Cheshire SK14 1RD,UK",
+            "T+44(0)1613665020-F+44(0)1613669732",
+        ]
+        r = en_parse(lines)
+        assert r["company_name"] == "OSC Limited"
+        assert r["person_name"] == "Ian Christian"
+        assert r["email"] == "ian.christian@sprayway.com"
