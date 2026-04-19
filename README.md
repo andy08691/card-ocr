@@ -5,8 +5,11 @@
 ## 功能
 
 - 上傳名片圖片（JPG / PNG / WebP）
-- 自動 OCR 識別文字（支援中文、英文名片）
-- 解析欄位：公司名、姓名、英文名、職稱、Email、市話、手機、地址、網站
+- 自動 OCR 識別文字（支援中文、英文名片，自動偵測語言）
+- 大尺寸圖片自動縮圖後再 OCR（保留清晰度、提升速度）
+- 解析欄位：公司名、姓名、英文名、職稱、Email、市話、手機、傳真、地址、網站
+- 從 Email 推斷欄位：local part → 姓名（`ian.christian` → Ian Christian）、domain → 公司名（`sprayway.com` → Sprayway）
+- OCR 合字自動修正（`OSCLimited` → `OSC Limited`）
 - 儲存原圖與解析結果至本機
 - 提供修正 API，供前端使用者手動修改欄位
 
@@ -122,6 +125,16 @@ bash stop.sh
 
 啟動後 Swagger UI：`http://localhost:8000/docs`（可換成實際機器 IP 或自訂 PORT）
 
+### GET `/health` — 健康檢查
+
+```bash
+curl http://localhost:8000/health
+```
+
+```json
+{"status": "ok", "db": "ok"}
+```
+
 ### POST `/api/cards/upload` — 上傳名片
 
 ```bash
@@ -142,6 +155,7 @@ curl -X POST http://localhost:8000/api/cards/upload \
   "email": "AFDA914@toyota.com.tw",
   "phone": "07-7827271",
   "mobile": "0931034566",
+  "fax": null,
   "address": "831高雄市大寮區力行路197號",
   "website": null,
   "raw_text": "TOYOTA\n高都汽車股份有限公司\n...",
@@ -168,22 +182,51 @@ curl -X PUT http://localhost:8000/api/cards/1 \
 
 ---
 
+## 解析欄位說明
+
+| 欄位 | 說明 |
+|---|---|
+| `company_name` | 公司名稱（含中文後綴如「股份有限公司」或英文後綴如 Corp / Ltd / Oy 等） |
+| `person_name` | 人名（中文 2–5 字 或 英文 Title Case / ALL CAPS） |
+| `english_name` | 英文姓名（中文名片上的英文名） |
+| `job_title` | 職稱（關鍵字比對） |
+| `email` | 電子郵件 |
+| `phone` | 市話 / 公司電話 |
+| `mobile` | 手機號碼 |
+| `fax` | 傳真號碼 |
+| `address` | 地址 |
+| `website` | 網址 |
+
+### Email 推斷邏輯
+
+當 OCR 無法識別出姓名或公司時，會從 Email 自動推斷：
+
+- **姓名**：`ian.christian@sprayway.com` → local part `ian.christian` → `"Ian Christian"`
+  - 各段至少 2 個字母，純英文字母，2–3 段才觸發
+- **公司**：`sprayway.com` → domain 去掉 TLD → `"Sprayway"`
+  - 個人信箱（gmail、yahoo、hotmail 等）不觸發此邏輯
+  - 僅在所有其他方法都找不到公司名時才作為最後備援
+
+---
+
 ## 專案結構
 
 ```
 card_ocr/
 ├── app/
-│   ├── main.py          # FastAPI 入口，CORS、靜態檔案、路由
+│   ├── main.py          # FastAPI 入口，CORS、靜態檔案、路由、/health
 │   ├── database.py      # SQLite 設定（SQLAlchemy）
 │   ├── models/
-│   │   └── card.py      # 資料庫 ORM model
+│   │   └── card.py      # 資料庫 ORM model（含 fax 欄位）
 │   ├── schemas/
 │   │   └── card.py      # Pydantic 請求/回應 schema
 │   ├── routers/
 │   │   └── cards.py     # API 路由（upload / get / update）
 │   └── services/
-│       ├── ocr.py       # PaddleOCR 封裝（中英自動偵測）
+│       ├── ocr.py       # PaddleOCR 封裝（中英自動偵測、自動縮圖）
 │       └── parser.py    # Regex + 規則解析欄位
+├── tests/
+│   └── test_parser.py   # pytest 單元測試（69 tests，無需啟動 server）
 ├── media/               # 上傳的名片圖片（git 忽略）
 ├── card_ocr.db          # SQLite 資料庫（git 忽略）
 ├── .venv/               # x86_64 虛擬環境（git 忽略）
@@ -196,6 +239,28 @@ card_ocr/
 ├── stop.sh                  # 關閉 port 8000 的腳本（macOS / Linux）
 ├── .env.example             # 環境變數範本
 └── .env                     # 環境設定（git 忽略）
+```
+
+---
+
+## 執行測試
+
+```bash
+source .venv_arm/bin/activate   # 或 source .venv/bin/activate
+pip install pytest              # 首次需安裝
+pytest tests/ -v
+```
+
+測試不需啟動 server 或下載 OCR 模型，純粹測試 parser 邏輯。
+
+---
+
+## 資料庫欄位新增（升級現有安裝）
+
+若從舊版升級，需手動新增 `fax` 欄位：
+
+```bash
+sqlite3 card_ocr.db "ALTER TABLE cards ADD COLUMN fax TEXT;"
 ```
 
 ---
@@ -294,7 +359,19 @@ python -c "import struct; print(struct.calcsize('P')*8)"
 
 ---
 
+### ❌ `table cards has no column named fax`
+
+**原因：** 升級前已有舊版資料庫，缺少 `fax` 欄位。
+
+**解法：**
+```bash
+sqlite3 card_ocr.db "ALTER TABLE cards ADD COLUMN fax TEXT;"
+```
+
+---
+
 ## 已知限制
 
 - OCR 對繁簡混用的名片可能有識別偏差（例如「銷售顧問」被識別為「销售厂周」），建議前端提供欄位修正功能
 - PaddlePaddle ARM dev 版（`0.0.0`）為 nightly build，穩定性不如正式版
+- OCR 有時會合併相鄰文字（如 `IAN CHRISTIAN` → `IANCHRISTIAN`）；parser 已針對常見情況做補償，但無法百分之百還原
