@@ -1,0 +1,15 @@
+# Docker 只讀 build context 根目錄的 .dockerignore。
+# 排除大檔/無關檔（注意：不要排除 app/、deploy/、requirements.txt——映像需要）。
+.git/
+.venv*/
+media/
+*.db
+**/__pycache__/
+*.pyc
+out_smoke/
+scratchpad/
+.env
+.claude/
+build.log
+test/
+tests/
