@@ -32,7 +32,8 @@ image = (
             "apt-get update && apt-get install -y --no-install-recommends "
             "curl ca-certificates libgl1 libglib2.0-0 && rm -rf /var/lib/apt/lists/*",
             "curl -fsSL https://ollama.com/install.sh | sh",
-            "pip install -U pip && pip install -U 'mineru[core,vllm]'",
+            # vLLM 釘 0.10.2（0.28+ 會讓 MinerU 輸出亂碼）；用 uv 避開 pip backtracking。
+            "pip install -U pip uv && uv pip install --system 'mineru[core]' 'vllm==0.10.2'",
         ]
     )
     # 應用層依賴：直接列出（等同 requirements.txt 的非 MinerU 部分）

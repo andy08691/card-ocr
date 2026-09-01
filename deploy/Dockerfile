@@ -32,12 +32,14 @@ RUN curl -fsSL https://ollama.com/install.sh | sh
 
 WORKDIR /app
 
-# MinerU：core + vllm 引擎（不裝 mlx，那是 Mac 專用、Linux 無 wheel）
-RUN pip install -U pip && pip install -U "mineru[core,vllm]"
+# MinerU core + 釘住相容的 vLLM（0.10.2；vLLM 0.28+ 會讓 MinerU 的 no-repeat-ngram
+# logits processor 失效 → 輸出重複亂碼）。用 uv 安裝：pip 對 vLLM 依賴會 backtracking 卡死。
+RUN pip install -U pip uv && \
+    uv pip install --system "mineru[core]" "vllm==0.10.2"
 
 # 應用層依賴（fastapi/uvicorn/sqlalchemy/opencc/pillow/ollama…）
 COPY requirements.txt .
-RUN pip install -r requirements.txt
+RUN uv pip install --system -r requirements.txt
 
 # 應用程式碼與啟動腳本
 COPY app ./app

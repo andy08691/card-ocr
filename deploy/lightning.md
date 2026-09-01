@@ -55,9 +55,11 @@ curl -X POST https://<lightning給你的網址>/api/cards/upload -F "file=@test/
 在 Studio 右側切換 GPU（T4 → L4 → A100），重跑步驟 4 再測，即可比較不同卡的單張延遲，
 直接幫你決定要買哪張自建（T4=保守下限、L4/A100=上限）。
 
-## 速度關鍵：vLLM vs transformers
-- 腳本預設裝 `mineru[core,vllm]`、走 vLLM——這是 GPU 能到 5–10s 的關鍵（transformers
-  在 GPU 上做 VLM 解碼很慢，實測 **T4 ~32s/張**）。
+## 速度關鍵：vLLM（釘 0.10.2）vs transformers
+- 腳本預設裝 `mineru[core]` + **`vllm==0.10.2`**（用 uv 裝）、走 vLLM——這是 GPU 能到 5–10s 的
+  關鍵（transformers 在 GPU 上做 VLM 解碼很慢，實測 **T4 ~32s/張**；**L4 + vllm 0.10.2 ~5s/張**）。
+- ⚠️ **vLLM 一定要釘 0.10.2**：0.28+ 會讓 MinerU 輸出重複亂碼（`<|txtMask fill:#f>`…）；
+  pip 裝 vLLM 會 backtracking 卡死，所以用 `uv pip install "vllm==0.10.2"`。
 - **T4 是 Turing 架構，vLLM 支援邊緣**：若 vLLM 裝不起來或 MinerU 在 vLLM 下報錯，
   退路 `pip uninstall -y vllm`（`MINERU_BACKEND=vlm-engine` 會自動退回 transformers，能動但慢）。
 - 想確認真正的 5–10s，用 **L4 / A100**（Lightning 綁卡）跑 vLLM 最準；你之後買

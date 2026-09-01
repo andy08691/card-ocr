@@ -71,7 +71,8 @@ gcloud run deploy card-ocr \
 | `PORT` | `8000` | 服務埠（Cloud Run 會覆寫）|
 
 ## 後端：GPU 預設 vLLM（快），transformers 為退路
-- Dockerfile / 腳本已預設裝 `mineru[core,vllm]` 並 `MINERU_BACKEND=vlm-engine`（CUDA 上自動用 vLLM）。
+- Dockerfile / 腳本已預設裝 `mineru[core]` + **`vllm==0.10.2`**（釘死版本）並 `MINERU_BACKEND=vlm-engine`（CUDA 上自動用 vLLM）。
+- ⚠️ **vLLM 版本要釘 0.10.2**：實測 **0.28+ 會讓 MinerU 的 no-repeat-ngram logits processor 失效 → 輸出一堆 `<|txtMask fill:#f>` 重複亂碼**（MinerU 需 vllm<0.22.0）。裝時用 **uv**（pip 對 vLLM 依賴會 backtracking 卡死）。實測 L4 + vllm 0.10.2 ≈ **~5s/張**。
 - **為何一定要 vLLM**：transformers 後端在 GPU 上做 VLM 自迴歸解碼很慢（實測 **T4 ~32s/張**）；
   vLLM 有優化 kernel，1.2B 模型可壓到**個位數秒**。速度就靠這個。
 - **與 Ollama 共存 16GB**：`MINERU_VIRTUAL_VRAM_SIZE=8` 讓 vLLM 只吃 ~8GB，其餘留給
