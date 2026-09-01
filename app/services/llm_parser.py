@@ -39,8 +39,17 @@ def _env_host() -> str:
     return os.getenv("OLLAMA_HOST", "http://localhost:11434")
 
 
-def _env_keep_alive() -> str:
-    return os.getenv("OLLAMA_KEEP_ALIVE", "5m")
+def _env_keep_alive():
+    """OLLAMA_KEEP_ALIVE：純數字（-1=永久常駐 / 或秒數）回傳 int；否則回傳時長字串（如 '30m'）。
+
+    直接把字串 '-1' 丟給 Ollama API 會被拒（`missing unit in duration`）——數字必須以
+    int 傳遞，帶單位的時長（'30m'/'1h'）才用字串。
+    """
+    v = os.getenv("OLLAMA_KEEP_ALIVE", "30m")
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return v
 
 
 def _env_think() -> bool:

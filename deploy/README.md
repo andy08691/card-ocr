@@ -2,7 +2,7 @@
 
 把整個服務（OCR + 本地 LLM 欄位擷取）掛到雲端 GPU，驗證單張 5–10 秒。
 一個容器同時跑 **Ollama(qwen3:4b)** 與 **FastAPI app**；GPU 上用 MinerU 的
-`vlm-transformers` 後端（避開 vLLM 依賴與 VRAM 競爭）。
+`vlm-engine` 後端（避開 vLLM 依賴與 VRAM 競爭）。
 
 ## 檔案
 | 檔 | 用途 |
@@ -62,7 +62,7 @@ gcloud run deploy card-ocr \
 | 變數 | 預設 | 說明 |
 |---|---|---|
 | `CARD_EXTRACTOR` | `llm` | `llm`＝走本地 LLM；`regex`＝一鍵回退純 regex |
-| `MINERU_BACKEND` | `vlm-transformers` | GPU 建議值；想用 vLLM 見下 |
+| `MINERU_BACKEND` | `vlm-engine` | GPU 建議值；想用 vLLM 見下 |
 | `OLLAMA_MODEL` | `qwen3:4b` | 換模型即改這裡 |
 | `OLLAMA_KEEP_ALIVE` | `-1` | 模型常駐；省 VRAM 可設 `30m`/`0` |
 | `MINERU_PDF_RENDER_THREADS` | `1` | 名片單頁，1 即可 |

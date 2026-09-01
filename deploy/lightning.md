@@ -13,7 +13,7 @@ Lightning 的 **Studio** = 持久 Linux + GPU 開發機，**不需要 Docker**�
      單張大概 ~6–12 秒；若 T4 就能到 ~10s，你要買的中階卡一定更快。
    - 想測更快的 **L4（24GB, $0.48/hr）/ A100**，需先在 Lightning 驗證付款方式（綁卡，
      額度內通常不扣款）。
-   T4 16GB 放得下 MinerU + qwen3:4b（用 `vlm-transformers` 後端，預設值即可）。
+   T4 16GB 放得下 MinerU + qwen3:4b（用 `vlm-engine` 後端，預設值即可）。
 
 ### 2. 取得程式碼
 Studio 終端機裡：
@@ -56,7 +56,7 @@ curl -X POST https://<lightning給你的網址>/api/cards/upload -F "file=@test/
 直接幫你決定要買哪張自建（T4=保守下限、L4/A100=上限）。
 
 ## 環境變數（可覆寫）
-`CARD_EXTRACTOR=llm|regex`、`MINERU_BACKEND=vlm-transformers`（GPU 建議）、
+`CARD_EXTRACTOR=llm|regex`、`MINERU_BACKEND=vlm-engine`（GPU 建議）、
 `OLLAMA_MODEL=qwen3:4b`、`OLLAMA_KEEP_ALIVE=-1`。
 
 ## 持久化備註

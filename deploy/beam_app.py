@@ -11,7 +11,7 @@ deploy/beam_app.py — Beam Pod 定義（把 MinerU + Ollama + FastAPI 掛上 GP
    若 Image/Pod 參數名有出入再微調。真正到處通用、確定可靠的核心是
    deploy/Dockerfile + deploy/entrypoint.sh（RunPod / Cloud Run 直接用那份即可）。
 
-設計對齊 Dockerfile：GPU 上走 MinerU 的 vlm-transformers 後端（避開 vLLM 依賴與 VRAM 競爭）。
+設計對齊 Dockerfile：GPU 上走 MinerU 的 vlm-engine 後端（無 vllm 時自動退回 transformers，避開 vLLM 依賴與 VRAM 競爭）。
 模型放在 Volume 快取：第一次啟動下載（qwen3:4b ~2.5GB + MinerU VLM ~2.5GB），之後秒起。
 """
 
@@ -63,7 +63,7 @@ card_ocr = Pod(
     keep_warm_seconds=-1,
     env={
         "CARD_EXTRACTOR": "llm",
-        "MINERU_BACKEND": "vlm-transformers",
+        "MINERU_BACKEND": "vlm-engine",
         "MINERU_PDF_RENDER_THREADS": "1",
         "OLLAMA_MODEL": "qwen3:4b",
         "OLLAMA_KEEP_ALIVE": "-1",

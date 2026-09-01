@@ -4,7 +4,7 @@
 # 可攜：同一份映像可用在 RunPod Pods / Google Cloud Run(GPU) / Fly.io / 任何
 # 有 NVIDIA GPU 的容器平台。Beam 亦可（見 deploy/beam_app.py）。
 #
-# GPU 上刻意使用 MinerU 的 vlm-transformers 後端（見 MINERU_BACKEND）：
+# GPU 上刻意使用 MinerU 的 vlm-engine 後端（見 MINERU_BACKEND）：
 #   - 1.2B VLM 在 GPU 上 transformers 已夠快（~1–3s）。
 #   - 避開 vLLM 的 CUDA 編譯/版本地獄，也避免 vLLM 預佔 VRAM 餓死 Ollama。
 #   想榨最後一點速度可改裝 mineru[vllm] 並把 MINERU_BACKEND 設回 vlm-engine，
@@ -43,7 +43,7 @@ RUN chmod +x /entrypoint.sh
 
 # 執行期預設（可在平台上覆寫）
 ENV CARD_EXTRACTOR=llm \
-    MINERU_BACKEND=vlm-transformers \
+    MINERU_BACKEND=vlm-engine \
     MINERU_PDF_RENDER_THREADS=1 \
     OLLAMA_MODEL=qwen3:4b \
     OLLAMA_KEEP_ALIVE=-1 \

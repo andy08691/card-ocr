@@ -4,12 +4,12 @@
 #
 # 執行：  bash deploy/lightning_run.sh
 # 之後在 Studio 介面把 port 8000 對外分享，即可用瀏覽器 / curl 測試。
-# GPU 上用 MinerU 的 vlm-transformers 後端（1.2B 夠快、免 vLLM、不與 Ollama 搶 VRAM）。
+# GPU 上用 MinerU 的 vlm-engine 後端（無 vllm 自動退回 transformers；1.2B 夠快、不與 Ollama 搶 VRAM）。
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
 export CARD_EXTRACTOR="${CARD_EXTRACTOR:-llm}"
-export MINERU_BACKEND="${MINERU_BACKEND:-vlm-transformers}"
+export MINERU_BACKEND="${MINERU_BACKEND:-vlm-engine}"   # 無 vllm 時自動退回 transformers
 export MINERU_PDF_RENDER_THREADS="${MINERU_PDF_RENDER_THREADS:-1}"
 export OLLAMA_KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:--1}"
 export OLLAMA_MODEL="${OLLAMA_MODEL:-qwen3:4b}"
