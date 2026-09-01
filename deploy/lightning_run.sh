@@ -22,6 +22,5 @@ fi
 ollama pull "${OLLAMA_MODEL}" >/dev/null 2>&1 || true
 
 echo "[run] 啟動 FastAPI（GPU: MINERU_BACKEND=${MINERU_BACKEND}）..."
-# shellcheck disable=SC1091
-source .venv/bin/activate
+# Lightning Studio 用預設 conda 環境（無 venv 可 activate）。
 exec uvicorn app.main:app --host 0.0.0.0 --port 8000

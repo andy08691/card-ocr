@@ -13,11 +13,9 @@ if ! command -v ollama >/dev/null 2>&1; then
   curl -fsSL https://ollama.com/install.sh | sh
 fi
 
-echo "[2/5] 建立 venv 並安裝 MinerU(core) + app 依賴 ..."
-# Linux 上 pip 的預設 torch wheel 就是 CUDA 版，故 venv 內 pip install 即可用 GPU。
-python -m venv .venv 2>/dev/null || python3 -m venv .venv
-# shellcheck disable=SC1091
-source .venv/bin/activate
+echo "[2/5] 安裝 MinerU(core) + app 依賴（Lightning Studio 只允許預設 conda 環境，直接裝進去）..."
+# Lightning Studio 不允許自建 venv；直接用預設 conda 環境。
+# Linux 上 pip 的預設 torch wheel 就是 CUDA 版，直接裝即可用 GPU。
 pip install -U pip
 pip install -U "mineru[core]"
 pip install -U -r requirements.txt
