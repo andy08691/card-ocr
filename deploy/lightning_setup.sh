@@ -21,8 +21,8 @@ pip install -U "mineru[core]"
 pip install -U -r requirements.txt
 # Lightning 預設 conda 常帶「舊 scipy + 被 mineru 升上來的 numpy 2.x」的衝突
 # （舊 scipy 會 `from numpy import Inf`，numpy 2.0 起已移除 → transformers import 失敗）。
-# 升 scipy 對齊 numpy 2.x：
-pip install -U scipy
+# 升 scipy / scikit-learn 對齊 numpy 2.x（Lightning base 預裝的舊版會卡 numpy<2）：
+pip install -U scipy scikit-learn
 
 echo "[3/5] 啟動 ollama serve（背景）..."
 if ! curl -sf http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
