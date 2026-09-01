@@ -12,9 +12,16 @@ main.py — FastAPI 應用程式入口
 啟動指令：
   開發模式：uvicorn app.main:app --reload
   正式環境：bash start.sh（或 start.bat on Windows）
+
+模型預熱：
+  MinerU 首次辨識需載入數 GB 模型。啟動時以背景 thread 預先跑一次 warmup，
+  server 立即可對外服務（/health 等），模型在背景載入後即快取於進程內，
+  之後的請求不必再付出載入成本。
 """
 
 import logging
+import threading
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.staticfiles import StaticFiles
@@ -36,12 +43,29 @@ logging.basicConfig(
 
 from app.database import Base, engine, get_db
 from app.routers.cards import router as cards_router
+from app.services import ocr
 
 # 應用程式啟動時自動建立資料表（若已存在則略過）
 # 注意：不會自動新增欄位，升級版本時需手動 ALTER TABLE
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Business Card OCR API", version="1.0.0")
+
+def _warmup_models():
+    """背景預熱：先 MinerU，再本地 LLM（若走 llm 路徑），讓第一張上傳不付載入成本。"""
+    ocr.warmup()
+    if os.getenv("CARD_EXTRACTOR", "llm").lower() != "regex":
+        from app.services import llm_parser
+        llm_parser.warmup()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """啟動時於背景 thread 預熱模型（非阻塞、失敗不影響啟動）。"""
+    threading.Thread(target=_warmup_models, name="warmup", daemon=True).start()
+    yield
+
+
+app = FastAPI(title="Business Card OCR API", version="1.0.0", lifespan=lifespan)
 
 # CORS：允許所有來源，適用於 server-to-server 內部部署
 # 若要限制來源，將 allow_origins=["*"] 改為指定網域清單

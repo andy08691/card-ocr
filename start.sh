@@ -3,9 +3,9 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# Activate virtual environment — try ARM first, then x86
-if [ -f "$SCRIPT_DIR/.venv_arm/bin/activate" ]; then
-    source "$SCRIPT_DIR/.venv_arm/bin/activate"
+# Activate virtual environment — prefer the MinerU venv, fall back to legacy names
+if [ -f "$SCRIPT_DIR/.venv_mineru/bin/activate" ]; then
+    source "$SCRIPT_DIR/.venv_mineru/bin/activate"
 elif [ -f "$SCRIPT_DIR/.venv/bin/activate" ]; then
     source "$SCRIPT_DIR/.venv/bin/activate"
 else

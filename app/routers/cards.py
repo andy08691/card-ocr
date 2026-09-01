@@ -10,8 +10,8 @@ routers/cards.py — 名片相關 API 路由
   1. 驗證檔案類型（jpg / png / webp）
   2. 以 UUID 命名儲存至 media/ 目錄
   3. 呼叫 run_ocr()（在 thread pool 執行，避免 blocking event loop）
-     → 大圖自動縮圖（>3000px）、語言偵測、PaddleOCR 識別
-  4. 呼叫 parse_card() 解析結構化欄位
+     → 大圖自動縮圖（>3000px）、語言偵測、MinerU 識別
+  4. 呼叫 extract_card()：regex 找候選 → 本地 LLM 分類 → validator → repair（失敗 fallback 到 regex）
   5. 寫入 SQLite，回傳 CardResponse
   6. 若 OCR/parse 失敗，刪除已儲存圖片並回傳 HTTP 422
 """
@@ -27,7 +27,7 @@ from app.database import get_db
 from app.models.card import Card
 from app.schemas.card import CardResponse, CardUpdate
 from app.services.ocr import run_ocr
-from app.services.parser import parse_card
+from app.services.card_extractor import extract_card
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ async def upload_card(file: UploadFile = File(...), db: Session = Depends(get_db
     """上傳名片圖片，執行 OCR 與欄位解析。
 
     - 圖片以 UUID 重新命名後存入 media/ 目錄
-    - OCR 在 thread pool 中執行（PaddleOCR 為 blocking I/O）
+    - OCR 在 thread pool 中執行（MinerU 為 blocking / CPU-bound）
     - 失敗時自動刪除已上傳的圖片並回傳 422
     """
     # ── 1. 驗證檔案類型 ──────────────────────────────────────────────────────
@@ -69,10 +69,13 @@ async def upload_card(file: UploadFile = File(...), db: Session = Depends(get_db
 
     # ── 3 & 4. OCR + 解析（失敗時清理圖片）─────────────────────────────────
     try:
-        # run_in_threadpool：將 blocking 的 PaddleOCR 呼叫移到 thread pool，
+        # run_in_threadpool：將 blocking 的 MinerU 呼叫移到 thread pool，
         # 避免 block FastAPI 的 async event loop
         ocr_result = await run_in_threadpool(run_ocr, image_path)
-        parsed = parse_card(
+        # extract_card：candidate(regex) → 本地 LLM 分類 → validator → repair。
+        # 是 async（Ollama 為 HTTP I/O，直接 await，不需 threadpool）；
+        # LLM 失敗時內部會 fallback 到 regex parse_card，不會回 422。
+        parsed = await extract_card(
             raw_text=ocr_result["raw_text"],
             boxes=ocr_result["boxes"],
             lang=ocr_result["lang"],

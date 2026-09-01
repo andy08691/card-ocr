@@ -1,114 +1,76 @@
 """
-services/ocr.py — PaddleOCR 封裝
+services/ocr.py — MinerU 封裝（取代原本的 PaddleOCR）
 
 主要功能：
   run_ocr(image_path) → dict
-    - 自動縮圖（超過 3000px 的圖片縮小後再 OCR）
-    - 以中文模型做第一次辨識（中文模型對中英混排效果好）
-    - 偵測語言後，若為純英文名片，改用英文模型再跑一次並比較信心分數
+    - 自動縮圖（超過 3000px 的圖片縮小後再辨識）
+    - 以 MinerU 執行文字擷取（名片圖片會被包成單頁 PDF 再解析）
     - 簡體字轉繁體（OpenCC s2twp 模式）
-    - 回傳 raw_text、ocr_confidence、boxes、lang
+    - 偵測語言（中文 / 英文），回傳 raw_text、ocr_confidence、boxes、lang
 
-版本兼容：
-  同一份 ocr.py 同時支援 PaddleOCR 2.x（macOS）與 3.x（Windows）。
-  在模組載入時偵測版本，對應不同的 API 呼叫方式與結果格式。
+為什麼用 MinerU：
+  MinerU（OpenDataLab）的 VLM 模型對名片的文字擷取比 PaddleOCR 更精準。
+  本模組只負責「圖片 → 文字」，下游的欄位解析（parser.py）維持不變，
+  因此 run_ocr 的回傳結構刻意與舊版完全相同，作為 OCR ↔ parser 的契約。
 
-  PaddleOCR 2.x：
-    建構子：PaddleOCR(use_angle_cls=True, lang="ch")
-    呼叫：  ocr.ocr(image_path, cls=True)
-    結果：  result[0] = [(bbox, (text, conf)), ...]
+後端與硬體：
+  預設後端 "vlm-engine"，MinerU 會依硬體自動挑推論引擎：
+    - macOS（安裝 mlx-vlm）→ MLX（Apple Silicon 加速）
+    - Linux + vllm         → vllm（GPU）
+    - 其餘                 → transformers（CPU fallback）
+  可用環境變數 MINERU_BACKEND 覆寫（例如 pipeline / hybrid-engine）。
 
-  PaddleOCR 3.x：
-    建構子：PaddleOCR(lang="ch")
-    呼叫：  ocr.predict(image_path)
-    結果：  result[i]["res"] = {"rec_texts": [...], "rec_scores": [...], "dt_polys": [...]}
+在 FastAPI 進程內執行：
+  MinerU 內部使用 spawn 模式的 ProcessPoolExecutor 做 PDF 轉圖。
+  以 uvicorn 啟動時 __main__ 為 uvicorn 入口，spawn 子行程會以 __mp_main__
+  重新 import，不會重跑啟動程式碼，因此進程內呼叫 do_parse 是安全的。
+  另以模組層級的鎖序列化辨識，避免併發時的模型競態並控制 16GB 機器的記憶體。
 """
 
+import glob
+import json
 import logging
+import os
 import re
+import tempfile
+import threading
 import time
+from pathlib import Path
 from typing import Optional
+
 from PIL import Image
-from paddleocr import PaddleOCR
-import paddleocr as _paddleocr_mod
 import opencc
 
 logger = logging.getLogger(__name__)
 
-# ── 版本偵測 ──────────────────────────────────────────────────────────────────
-# 在模組載入時偵測 PaddleOCR 主版本號，決定使用 2.x 還是 3.x API 路徑
-_IS_V3 = int(_paddleocr_mod.__version__.split(".")[0]) >= 3
+# ── MinerU 執行環境調校 ────────────────────────────────────────────────────────
+# 名片只有一頁，PDF 轉圖用單一 worker 即可：省記憶體、減少 spawn 子行程成本。
+# 使用 setdefault，讓外部仍可用環境變數覆寫。
+os.environ.setdefault("MINERU_PDF_RENDER_THREADS", "1")
 
 # OpenCC 轉換器：簡體 → 繁體台灣（s2twp 模式包含詞彙修正）
 _converter = opencc.OpenCC("s2twp")
 
 # ── 圖片縮圖設定 ──────────────────────────────────────────────────────────────
-# 超過此像素數（長邊）的圖片會在 OCR 前先縮小，加快處理速度且不影響精度
+# 超過此像素數（長邊）的圖片會在辨識前先縮小，降低記憶體使用
 _MAX_OCR_PIXELS = 3000
 
-# ── OCR 實例快取（Singleton，懶初始化）────────────────────────────────────────
-# PaddleOCR 初始化時會載入約 50–100MB 的模型，因此只建立一次並重複使用
-# _ocr_zh：處理中文（含中英混排）
-# _ocr_en：處理純英文名片（字體辨識更準確）
-_ocr_zh: Optional[PaddleOCR] = None
-_ocr_en: Optional[PaddleOCR] = None
+# ── 辨識序列化鎖 ──────────────────────────────────────────────────────────────
+# MinerU 以進程內 singleton 快取模型；用鎖確保同時只有一次辨識在跑，
+# 避免併發請求造成模型競態，並在 16GB 機器上控制記憶體峰值。
+_ocr_lock = threading.Lock()
 
 
-def _get_ocr(lang: str) -> PaddleOCR:
-    """取得對應語言的 PaddleOCR singleton 實例（首次呼叫時初始化）。
+def _select_backend() -> str:
+    """選擇 MinerU 後端。
 
-    Args:
-        lang: "zh"（中文模型）或 "en"（英文模型）
+    預設 "vlm-engine"：MinerU 的 inference_engine='auto' 會依硬體自動挑加速器
+    （Mac→MLX、Linux+CUDA→vllm、其餘→transformers）。可用 MINERU_BACKEND 覆寫。
+
+    以 `or` 處理環境變數為空字串的情況（.env 常寫成 `MINERU_BACKEND=`），
+    此時 os.getenv 會回傳 ""，需視為未設定並套用預設值。
     """
-    global _ocr_zh, _ocr_en
-    if lang == "en":
-        if _ocr_en is None:
-            if _IS_V3:
-                _ocr_en = PaddleOCR(lang="en")
-            else:
-                # use_angle_cls=True：啟用文字方向分類器，支援旋轉名片
-                _ocr_en = PaddleOCR(use_angle_cls=True, lang="en")
-        return _ocr_en
-    else:
-        if _ocr_zh is None:
-            if _IS_V3:
-                _ocr_zh = PaddleOCR(lang="ch")
-            else:
-                _ocr_zh = PaddleOCR(use_angle_cls=True, lang="ch")
-        return _ocr_zh
-
-
-def _extract_boxes(ocr: PaddleOCR, image_path: str) -> list:
-    """執行 OCR 並回傳統一格式的 box 清單。
-
-    回傳格式：[{"text": str, "bbox": list, "confidence": float}, ...]
-
-    PaddleOCR 2.x 與 3.x 結果格式不同，此函式統一封裝：
-      - bbox：文字區塊的四個頂點座標（[[x1,y1],[x2,y2],[x3,y3],[x4,y4]]）
-      - confidence：辨識信心分數（0.0–1.0）
-    """
-    boxes = []
-    if _IS_V3:
-        # 3.x API：result 為 list，每個元素有 res 字典
-        result = ocr.predict(image_path)
-        if not result or not result[0]["res"]["rec_texts"]:
-            return boxes
-        for res in result:
-            for text, conf, bbox in zip(
-                res["res"]["rec_texts"],
-                res["res"]["rec_scores"],
-                res["res"]["dt_polys"],
-            ):
-                boxes.append({"text": text, "bbox": bbox, "confidence": conf})
-    else:
-        # 2.x API：result[0] 為 [(bbox, (text, conf)), ...] 格式
-        result = ocr.ocr(image_path, cls=True)
-        if not result or not result[0]:
-            return boxes
-        for line in result[0]:
-            bbox, (text, conf) = line
-            boxes.append({"text": text, "bbox": bbox, "confidence": conf})
-    return boxes
+    return os.getenv("MINERU_BACKEND") or "vlm-engine"
 
 
 def _detect_language(text: str) -> str:
@@ -123,7 +85,7 @@ def _detect_language(text: str) -> str:
     """
     if not text:
         return "en"
-    chinese_chars = len(re.findall(r"[\u4e00-\u9fff]", text))
+    chinese_chars = len(re.findall(r"[一-鿿]", text))
     ratio = chinese_chars / len(text)
     return "zh" if ratio > 0.2 else "en"
 
@@ -131,8 +93,8 @@ def _detect_language(text: str) -> str:
 def _resize_if_needed(image_path: str) -> None:
     """若圖片長邊超過 _MAX_OCR_PIXELS，縮小後原地覆蓋。
 
-    高解析度照片（手機拍攝的名片通常 > 4000px）不需要完整解析度做 OCR，
-    縮圖後可大幅降低記憶體使用並加快識別速度，且不影響文字辨識精度。
+    高解析度照片（手機拍攝的名片通常 > 4000px）不需要完整解析度做辨識，
+    縮圖後可降低記憶體使用，且不影響文字辨識精度。
     """
     img = Image.open(image_path)
     w, h = img.size
@@ -144,21 +106,90 @@ def _resize_if_needed(image_path: str) -> None:
         logger.info("Resized image %s from %dx%d to %dx%d", image_path, w, h, new_w, new_h)
 
 
+def _bbox_to_polygon(bbox) -> list:
+    """把 MinerU 的 [x0, y0, x1, y1] 轉成 parser 需要的四點多邊形。
+
+    parser._box_top() 以 min(pt[1] for pt in bbox) 取上緣做由上到下排序，
+    因此只需提供含 [x, y] 點的可迭代結構即可（x 與 confidence 解析器不使用）。
+    格式異常時回傳 [[0, 0]]，讓 _box_top 取到 0 並保留原輸入順序。
+    """
+    try:
+        x0, y0, x1, y1 = bbox
+        return [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+    except Exception:
+        return [[0, 0]]
+
+
+def _content_list_to_boxes(content_list: list) -> list:
+    """把 MinerU 的 content_list.json 轉成 run_ocr 的 boxes 格式。
+
+    - 只保留有 text 的區塊；image / table 等區塊沒有 text 欄位（logo 以
+      content 呈現，常是雜訊），一律略過。
+    - 每個 box 的文字做簡→繁轉換（對英文透明）。
+    - confidence 固定為 1.0：MinerU 的 content_list 不提供 per-box 分數，
+      而解析器本來就不使用此欄位。
+    """
+    boxes = []
+    for item in content_list:
+        text = (item.get("text") or "").strip()
+        if not text:
+            continue
+        text = _converter.convert(text)
+        boxes.append({
+            "text": text,
+            "bbox": _bbox_to_polygon(item.get("bbox")),
+            "confidence": 1.0,
+        })
+    return boxes
+
+
+def _run_mineru(image_path: str) -> list:
+    """對圖片執行 MinerU，回傳 content_list（區塊清單）。
+
+    do_parse 會把結果寫到暫存目錄，再讀回 <name>_content_list.json。
+    以 _ocr_lock 序列化，確保同時只有一次辨識在跑。
+    """
+    # lazy import：避免 web 進程啟動時就載入 torch / mlx 等重量級套件
+    from mineru.cli.common import do_parse, read_fn
+
+    img = Path(image_path)
+    with _ocr_lock:
+        with tempfile.TemporaryDirectory() as out_dir:
+            do_parse(
+                out_dir,
+                [img.stem],
+                [read_fn(img)],          # 圖片會被包成單頁 PDF
+                ["ch"],                  # pipeline 後端的 OCR 語言；VLM 會忽略
+                backend=_select_backend(),
+                formula_enable=False,    # 名片沒有公式 / 表格，關閉以加速
+                table_enable=False,
+                image_analysis=False,    # 名片不需圖表/logo 分析，關閉省一次 VLM pass
+            )
+            matches = [
+                m for m in glob.glob(os.path.join(out_dir, "**", "*_content_list.json"),
+                                     recursive=True)
+                if m.endswith("_content_list.json")   # 排除 *_content_list_v2.json
+            ]
+            if not matches:
+                logger.warning("MinerU produced no content_list.json for %s", image_path)
+                return []
+            with open(matches[0], encoding="utf-8") as f:
+                return json.load(f)
+
+
 def run_ocr(image_path: str) -> dict:
     """對指定圖片執行 OCR，回傳結構化結果。
 
     流程：
       1. 縮圖（若需要）
-      2. 中文模型第一次辨識
-      3. 簡體 → 繁體轉換（OpenCC）
+      2. MinerU 文字擷取
+      3. 簡體 → 繁體轉換（在 _content_list_to_boxes 內完成）
       4. 偵測語言
-      5. 若為英文名片，用英文模型再跑一次，取信心分數較高者
-         （英文模型信心分數允許比中文模型低 0.01 仍優先使用）
 
     Returns:
         {
-            "raw_text": str,           # 所有 box 文字以換行連接
-            "ocr_confidence": float,   # 平均信心分數（四捨五入至小數點後 4 位）
+            "raw_text": str,           # 所有 box 文字以換行連接（依 MinerU 閱讀順序）
+            "ocr_confidence": float,   # MinerU 不提供分數，成功為 1.0、無結果為 0.0
             "boxes": list,             # [{text, bbox, confidence}, ...]
             "lang": str,               # "zh" 或 "en"
         }
@@ -166,47 +197,41 @@ def run_ocr(image_path: str) -> dict:
     _resize_if_needed(image_path)
 
     t0 = time.monotonic()
-
-    # ── 第一次：中文模型 ─────────────────────────────────────────────────────
-    ocr = _get_ocr("zh")
-    boxes = _extract_boxes(ocr, image_path)
+    content_list = _run_mineru(image_path)
+    boxes = _content_list_to_boxes(content_list)
 
     if not boxes:
         return {"raw_text": "", "ocr_confidence": 0.0, "boxes": [], "lang": "en"}
 
-    # 簡體轉繁體（對英文文字透明，不影響輸出）
-    for b in boxes:
-        b["text"] = _converter.convert(b["text"])
-
     raw_text = "\n".join(b["text"] for b in boxes)
-    confidences = [b["confidence"] for b in boxes]
-    avg_confidence = sum(confidences) / len(confidences)
     lang = _detect_language(raw_text)
 
-    # ── 第二次：英文模型（只在純英文名片時觸發）─────────────────────────────
-    # 英文模型對拉丁字母字型更專精，給予 0.01 的信心分數加成
-    # 確保在兩者差距極小時優先選用英文模型
-    if lang == "en":
-        ocr_en = _get_ocr("en")
-        boxes_en = _extract_boxes(ocr_en, image_path)
-        if boxes_en:
-            confidences_en = [b["confidence"] for b in boxes_en]
-            avg_en = sum(confidences_en) / len(confidences_en)
-            if avg_en > avg_confidence - 0.01:
-                boxes = boxes_en
-                confidences = confidences_en
-                raw_text = "\n".join(b["text"] for b in boxes)
-                avg_confidence = avg_en
-
-    elapsed = time.monotonic() - t0
     logger.info(
-        "OCR done: lang=%s confidence=%.4f boxes=%d time=%.2fs path=%s",
-        lang, avg_confidence, len(boxes), elapsed, image_path,
+        "MinerU OCR done: lang=%s boxes=%d time=%.2fs path=%s",
+        lang, len(boxes), time.monotonic() - t0, image_path,
     )
 
     return {
         "raw_text": raw_text,
-        "ocr_confidence": round(avg_confidence, 4),
+        "ocr_confidence": 1.0,
         "boxes": boxes,
         "lang": lang,
     }
+
+
+def warmup() -> None:
+    """預先載入 MinerU 模型，避免第一個請求付出載入成本。
+
+    產生一張很小的合成圖片跑一次 run_ocr，把 ~數 GB 模型載入進程內快取。
+    設計為非致命：任何失敗只記 log，不影響 server 啟動。
+    """
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "warmup.png")
+            Image.new("RGB", (320, 160), "white").save(p)
+            t0 = time.monotonic()
+            _run_mineru(p)
+            logger.info("MinerU warmup done in %.2fs (backend=%s)",
+                        time.monotonic() - t0, _select_backend())
+    except Exception:
+        logger.exception("MinerU warmup failed (non-fatal); model will load on first request")
