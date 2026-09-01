@@ -13,11 +13,14 @@ if ! command -v ollama >/dev/null 2>&1; then
   curl -fsSL https://ollama.com/install.sh | sh
 fi
 
-echo "[2/5] 安裝 MinerU(core) + app 依賴（Lightning Studio 只允許預設 conda 環境，直接裝進去）..."
+echo "[2/5] 安裝 MinerU(core+vllm) + app 依賴（Lightning Studio 只允許預設 conda 環境，直接裝進去）..."
 # Lightning Studio 不允許自建 venv；直接用預設 conda 環境。
 # Linux 上 pip 的預設 torch wheel 就是 CUDA 版，直接裝即可用 GPU。
+# vllm 引擎：GPU 上做 VLM 解碼比 transformers 快很多（transformers 在 T4 上 ~32s/張）。
+# ⚠️ Turing 架構的 T4 對 vLLM 支援是邊緣的；若之後 MinerU 在 vLLM 下報錯/裝不起來，
+#    退路：`pip uninstall -y vllm`（MINERU_BACKEND=vlm-engine 會自動退回 transformers，慢但能動）。
 pip install -U pip
-pip install -U "mineru[core]"
+pip install -U "mineru[core,vllm]"
 pip install -U -r requirements.txt
 # Lightning 預設 conda 常帶「舊 scipy + 被 mineru 升上來的 numpy 2.x」的衝突
 # （舊 scipy 會 `from numpy import Inf`，numpy 2.0 起已移除 → transformers import 失敗）。

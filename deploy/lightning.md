@@ -55,9 +55,18 @@ curl -X POST https://<lightning給你的網址>/api/cards/upload -F "file=@test/
 在 Studio 右側切換 GPU（T4 → L4 → A100），重跑步驟 4 再測，即可比較不同卡的單張延遲，
 直接幫你決定要買哪張自建（T4=保守下限、L4/A100=上限）。
 
+## 速度關鍵：vLLM vs transformers
+- 腳本預設裝 `mineru[core,vllm]`、走 vLLM——這是 GPU 能到 5–10s 的關鍵（transformers
+  在 GPU 上做 VLM 解碼很慢，實測 **T4 ~32s/張**）。
+- **T4 是 Turing 架構，vLLM 支援邊緣**：若 vLLM 裝不起來或 MinerU 在 vLLM 下報錯，
+  退路 `pip uninstall -y vllm`（`MINERU_BACKEND=vlm-engine` 會自動退回 transformers，能動但慢）。
+- 想確認真正的 5–10s，用 **L4 / A100**（Lightning 綁卡）跑 vLLM 最準；你之後買
+  4070 Ti Super / 3090 + vLLM 同理會快。
+
 ## 環境變數（可覆寫）
-`CARD_EXTRACTOR=llm|regex`、`MINERU_BACKEND=vlm-engine`（GPU 建議）、
-`OLLAMA_MODEL=qwen3:4b`、`OLLAMA_KEEP_ALIVE=-1`。
+`CARD_EXTRACTOR=llm|regex`、`MINERU_BACKEND=vlm-engine`（CUDA 上有 vllm 自動用 vLLM）、
+`MINERU_VIRTUAL_VRAM_SIZE=8`（限 vLLM VRAM、留給 Ollama）、
+`OLLAMA_MODEL=qwen3:4b`、`OLLAMA_KEEP_ALIVE=30m`。
 
 ## 持久化備註
 - Studio 的家目錄會持久保存；模型快取在 `~/.cache/huggingface`（MinerU）與 `~/.ollama`（LLM），

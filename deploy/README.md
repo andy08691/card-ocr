@@ -2,7 +2,8 @@
 
 把整個服務（OCR + 本地 LLM 欄位擷取）掛到雲端 GPU，驗證單張 5–10 秒。
 一個容器同時跑 **Ollama(qwen3:4b)** 與 **FastAPI app**；GPU 上用 MinerU 的
-`vlm-engine` 後端（避開 vLLM 依賴與 VRAM 競爭）。
+**vLLM** 後端（`vlm-engine`，速度關鍵），並用 `MINERU_VIRTUAL_VRAM_SIZE` 限制
+vLLM 的 VRAM 佔用，讓 Ollama 在同一張卡共存。
 
 ## 檔案
 | 檔 | 用途 |
@@ -62,19 +63,21 @@ gcloud run deploy card-ocr \
 | 變數 | 預設 | 說明 |
 |---|---|---|
 | `CARD_EXTRACTOR` | `llm` | `llm`＝走本地 LLM；`regex`＝一鍵回退純 regex |
-| `MINERU_BACKEND` | `vlm-engine` | GPU 建議值；想用 vLLM 見下 |
+| `MINERU_BACKEND` | `vlm-engine` | CUDA 上有 vllm 自動用 **vLLM**（快）；無 vllm 則退 transformers（慢） |
+| `MINERU_VIRTUAL_VRAM_SIZE` | `8` | 限制 vLLM 只吃 ~8GB，留 VRAM 給 Ollama（16GB 卡建議 8；24GB 可調高） |
 | `OLLAMA_MODEL` | `qwen3:4b` | 換模型即改這裡 |
-| `OLLAMA_KEEP_ALIVE` | `-1` | 模型常駐；省 VRAM 可設 `30m`/`0` |
+| `OLLAMA_KEEP_ALIVE` | `-1` | 模型常駐（永久）；省 VRAM 可設 `30m`/`0` |
 | `MINERU_PDF_RENDER_THREADS` | `1` | 名片單頁，1 即可 |
 | `PORT` | `8000` | 服務埠（Cloud Run 會覆寫）|
 
-## 想榨最後一點速度：改用 vLLM（選配）
-1. Dockerfile 改 `pip install "mineru[all]"`（含 vLLM）。
-2. 設 `MINERU_BACKEND=vlm-engine`（CUDA 上自動選 vLLM）。
-3. 為避免 vLLM 預佔 90% VRAM 餓死 Ollama，加 vLLM 參數
-   `--gpu-memory-utilization 0.45 --max-model-len 8192 --max-num-seqs 1`
-   （或設 `MINERU_VIRTUAL_VRAM_SIZE=8`）。
-對 1.2B 模型，transformers 與 vLLM 的單張延遲差距不大，**建議先用預設 transformers**。
+## 後端：GPU 預設 vLLM（快），transformers 為退路
+- Dockerfile / 腳本已預設裝 `mineru[core,vllm]` 並 `MINERU_BACKEND=vlm-engine`（CUDA 上自動用 vLLM）。
+- **為何一定要 vLLM**：transformers 後端在 GPU 上做 VLM 自迴歸解碼很慢（實測 **T4 ~32s/張**）；
+  vLLM 有優化 kernel，1.2B 模型可壓到**個位數秒**。速度就靠這個。
+- **與 Ollama 共存 16GB**：`MINERU_VIRTUAL_VRAM_SIZE=8` 讓 vLLM 只吃 ~8GB，其餘留給
+  Ollama(qwen3:4b ~3–4GB)。24GB 卡可調高。
+- **退路（vLLM 裝不起來 / 不支援該 GPU，例如 Turing 的 T4）**：改裝 `mineru[core]`（不含 vllm），
+  並 `pip uninstall -y vllm`；`MINERU_BACKEND=vlm-engine` 會自動退回 transformers（慢但能動）。
 
 ## 驗證
 ```bash

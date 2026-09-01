@@ -9,7 +9,8 @@
 set -euo pipefail
 
 export CARD_EXTRACTOR="${CARD_EXTRACTOR:-llm}"
-export MINERU_BACKEND="${MINERU_BACKEND:-vlm-engine}"   # 無 vllm 時自動退回 transformers
+export MINERU_BACKEND="${MINERU_BACKEND:-vlm-engine}"   # CUDA 上有 vllm 自動用 vllm；無則退 transformers
+export MINERU_VIRTUAL_VRAM_SIZE="${MINERU_VIRTUAL_VRAM_SIZE:-8}"  # 限 vLLM ~8GB，留 VRAM 給 Ollama
 export MINERU_PDF_RENDER_THREADS="${MINERU_PDF_RENDER_THREADS:-1}"
 export OLLAMA_KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:--1}"
 export OLLAMA_MODEL="${OLLAMA_MODEL:-qwen3:4b}"

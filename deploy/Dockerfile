@@ -4,11 +4,14 @@
 # 可攜：同一份映像可用在 RunPod Pods / Google Cloud Run(GPU) / Fly.io / 任何
 # 有 NVIDIA GPU 的容器平台。Beam 亦可（見 deploy/beam_app.py）。
 #
-# GPU 上刻意使用 MinerU 的 vlm-engine 後端（見 MINERU_BACKEND）：
-#   - 1.2B VLM 在 GPU 上 transformers 已夠快（~1–3s）。
-#   - 避開 vLLM 的 CUDA 編譯/版本地獄，也避免 vLLM 預佔 VRAM 餓死 Ollama。
-#   想榨最後一點速度可改裝 mineru[vllm] 並把 MINERU_BACKEND 設回 vlm-engine，
-#   同時加 vLLM 的 --gpu-memory-utilization 0.45（見 deploy/README.md）。
+# GPU 上用 MinerU 的 vLLM 後端（MINERU_BACKEND=vlm-engine，CUDA 上自動選 vLLM）：
+#   - 為了速度：transformers 後端在 GPU 上做 VLM 自迴歸解碼很慢（實測 T4 上 ~32s/張），
+#     vLLM 有優化 kernel，1.2B 模型可壓到個位數秒。
+#   - 為了與 Ollama 共存 16GB：用 MINERU_VIRTUAL_VRAM_SIZE 限制 vLLM 只吃 ~8GB，
+#     其餘留給 Ollama(qwen3:4b ~3–4GB)，避免 vLLM 預佔 90% VRAM 餓死 Ollama。
+#   退路：若某張卡 vLLM 裝不起來/不支援（如 Turing T4 邊緣情況），改裝 mineru[core]
+#     （不含 vllm），MINERU_BACKEND=vlm-engine 會自動退回 transformers（慢但能動）。
+#     見 deploy/README.md。
 #
 # 從專案根目錄建置：  docker build -f deploy/Dockerfile -t card-ocr-gpu .
 # ─────────────────────────────────────────────────────────────────────────────
@@ -29,8 +32,8 @@ RUN curl -fsSL https://ollama.com/install.sh | sh
 
 WORKDIR /app
 
-# MinerU：core 版含 transformers VLM 後端（不含 vllm/mlx），較輕且穩
-RUN pip install -U pip && pip install -U "mineru[core]"
+# MinerU：core + vllm 引擎（不裝 mlx，那是 Mac 專用、Linux 無 wheel）
+RUN pip install -U pip && pip install -U "mineru[core,vllm]"
 
 # 應用層依賴（fastapi/uvicorn/sqlalchemy/opencc/pillow/ollama…）
 COPY requirements.txt .
@@ -44,6 +47,7 @@ RUN chmod +x /entrypoint.sh
 # 執行期預設（可在平台上覆寫）
 ENV CARD_EXTRACTOR=llm \
     MINERU_BACKEND=vlm-engine \
+    MINERU_VIRTUAL_VRAM_SIZE=8 \
     MINERU_PDF_RENDER_THREADS=1 \
     OLLAMA_MODEL=qwen3:4b \
     OLLAMA_KEEP_ALIVE=-1 \

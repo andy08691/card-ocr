@@ -32,7 +32,7 @@ image = (
             "apt-get update && apt-get install -y --no-install-recommends "
             "curl ca-certificates libgl1 libglib2.0-0 && rm -rf /var/lib/apt/lists/*",
             "curl -fsSL https://ollama.com/install.sh | sh",
-            "pip install -U pip && pip install -U 'mineru[core]'",
+            "pip install -U pip && pip install -U 'mineru[core,vllm]'",
         ]
     )
     # 應用層依賴：直接列出（等同 requirements.txt 的非 MinerU 部分）
@@ -64,6 +64,7 @@ card_ocr = Pod(
     env={
         "CARD_EXTRACTOR": "llm",
         "MINERU_BACKEND": "vlm-engine",
+        "MINERU_VIRTUAL_VRAM_SIZE": "8",   # 限 vLLM ~8GB，留 VRAM 給 Ollama
         "MINERU_PDF_RENDER_THREADS": "1",
         "OLLAMA_MODEL": "qwen3:4b",
         "OLLAMA_KEEP_ALIVE": "-1",
