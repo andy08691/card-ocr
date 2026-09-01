@@ -8,8 +8,12 @@ Lightning 的 **Studio** = 持久 Linux + GPU 開發機，**不需要 Docker**�
 ### 1. 註冊 + 開 GPU Studio
 1. 到 **https://lightning.ai** → Sign up（**Google / GitHub 登入**，不寄認證信）。
 2. 進 dashboard → **New Studio**（或用預設 Studio）。
-3. 右側切換運算資源 → 選 **GPU**：先用 **L4（24GB，$0.48/hr）** 驗證；想更快可換 **A100**。
-   （免費方案每月 ~80 GPU-hr（spot），驗證只需幾小時。）
+3. 右側切換運算資源 → 選 **GPU**：
+   - **免費且不綁卡 = 只有 T4（16GB）**。先用 T4 驗證即可——它是保守下限，
+     單張大概 ~6–12 秒；若 T4 就能到 ~10s，你要買的中階卡一定更快。
+   - 想測更快的 **L4（24GB, $0.48/hr）/ A100**，需先在 Lightning 驗證付款方式（綁卡，
+     額度內通常不扣款）。
+   T4 16GB 放得下 MinerU + qwen3:4b（用 `vlm-transformers` 後端，預設值即可）。
 
 ### 2. 取得程式碼
 Studio 終端機裡：
