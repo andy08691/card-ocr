@@ -132,7 +132,7 @@ async def upload_card(
 
     # ── 4. 辨識 + 欄位擷取（失敗時清理圖片）─────────────────────────────────
     try:
-        result = await run_cloud_pipeline(prepared, cache_key=filename)
+        result = await run_cloud_pipeline(prepared)
     except VisionExtractionError as exc:
         os.path.exists(image_path) and os.remove(image_path)
         headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after else None

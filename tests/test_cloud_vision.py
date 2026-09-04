@@ -89,11 +89,16 @@ class TestSystemPrompt:
 
 
 class TestContentBuilders:
-    def test_user_content_shape(self):
+    """content 的順序是承重的：圖片必須在文字前面（prompt cache 前綴）。"""
+
+    def test_user_content_puts_image_before_text(self):
         c = vx.build_user_content("data:image/jpeg;base64,AAA", "auto")
-        assert [p["type"] for p in c] == ["input_text", "input_image"]
-        assert c[1]["image_url"] == "data:image/jpeg;base64,AAA"
-        assert c[1]["detail"] == "auto", "detail 是 SDK 的 Required 欄位，必須每次明確傳"
+        assert [p["type"] for p in c] == ["input_image", "input_text"], (
+            "圖片必須在前——快取比對的是前綴，文字在前會讓同一張卡的 repair "
+            "在文字就分岔，圖片永遠進不了共用前綴"
+        )
+        assert c[0]["image_url"] == "data:image/jpeg;base64,AAA"
+        assert c[0]["detail"] == "auto", "detail 是 SDK 的 Required 欄位，必須每次明確傳"
 
     def test_repair_content_still_includes_the_image(self):
         # 這是與 llm_parser 純文字 repair 的關鍵差異：模型要能再看一眼圖片。
@@ -104,8 +109,15 @@ class TestContentBuilders:
             [{"field": "email", "message": "email not among OCR candidates"}],
             "raw transcription", {"emails": ["right@x.com"]}, "auto",
         )
-        assert [p["type"] for p in c] == ["input_text", "input_image"]
-        assert c[1]["image_url"] == "data:image/jpeg;base64,AAA"
+        assert [p["type"] for p in c] == ["input_image", "input_text"]
+        assert c[0]["image_url"] == "data:image/jpeg;base64,AAA"
+
+    def test_extract_and_repair_share_the_image_prefix(self):
+        """extract 與 repair 的第 0 個 part 必須完全相同，才可能命中長前綴快取。"""
+        url = "data:image/jpeg;base64,AAA"
+        a = vx.build_user_content(url, "auto")
+        b = vx.build_repair_content(url, {}, [], "raw", {}, "auto")
+        assert a[0] == b[0]
 
     def test_repair_content_carries_issues_and_previous(self):
         c = vx.build_repair_content(
@@ -113,10 +125,37 @@ class TestContentBuilders:
             [{"field": "email", "message": "email not among OCR candidates"}],
             "raw", {"emails": ["right@x.com"]}, "auto",
         )
-        text = c[0]["text"]
+        text = c[1]["text"]
         assert "email" in text and "not among OCR candidates" in text
         assert "wrong@x.com" in text and "right@x.com" in text
         assert "Do not invent" in text
+
+
+class TestPromptCacheKey:
+    """prompt_cache_key 影響路由。每張卡一個 key 等於把快取切開、保證永不命中。
+
+    固定值讓所有請求共用 instructions + strict schema 前綴（實測 1,424 tokens，
+    高於 GPT-5.6 系列 1,024 的門檻），費率從 cache write $0.25/1M 降到 $0.02/1M。
+    """
+
+    def test_default_key_is_a_constant(self):
+        assert isinstance(vx._CACHE_KEY, str) and vx._CACHE_KEY
+
+    def test_extractor_falls_back_to_the_shared_key(self):
+        captured = {}
+
+        class _Probe(vx.VisionCardExtractor):
+            async def _respond(self, content, cache_key=None):
+                captured["key"] = cache_key
+                return None
+
+        class _Prepared:
+            data_url = "data:image/jpeg;base64,AAA"
+
+        import asyncio
+
+        asyncio.run(_Probe().extract(_Prepared()))
+        assert captured["key"] == vx._CACHE_KEY, "沒傳 cache_key 時必須落回共用的固定值"
 
 
 class _Stub:

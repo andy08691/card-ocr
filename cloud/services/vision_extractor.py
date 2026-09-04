@@ -43,6 +43,14 @@ Return every field key; use null when a field is absent."""
 
 _USER_TEXT = "Transcribe this business card and extract the contact fields."
 
+# prompt cache 的路由鍵。**必須是固定值，不能每張卡不同。**
+# prompt_cache_key 影響路由：給每個請求不同的 key 等於把快取切開，保證永遠不命中。
+# 固定值讓所有請求共用 instructions + strict schema 這段前綴（實測 1,424 tokens，
+# 超過 GPT-5.6 系列 1,024 的最低快取門檻），費率從 cache write $0.25/1M
+# 降到 cached input $0.02/1M——約占每張成本的 25%。
+# 快取前綴在最後一次寫入/命中後存活 30 分鐘，所以低流量時段仍會偶爾 miss。
+_CACHE_KEY = "card-ocr-vision-v1"
+
 _REPAIR_TEXT = (
     "Your previous extraction failed deterministic validation. Look at the card again.\n"
     "Either correct the field, OR correct raw_text if your transcription omitted or mangled "
@@ -119,13 +127,18 @@ def map_provider_error(exc: Exception) -> VisionExtractionError:
 
 # ── prompt 建構（純函式，離線可測）────────────────────────────────────────────
 def build_user_content(data_url: str, detail: str) -> list:
-    """一個 input_text + 一個 input_image。
+    """一個 input_image + 一個 input_text。
+
+    **圖片刻意放在文字前面**（prompt cache 的關係）：快取比對的是「前綴」，
+    而 extract 與 repair 的指示文字不同、圖片相同。圖片在前時，
+    同一張卡的 repair 可以命中 instructions + schema + 圖片 的長前綴（~3,800 tokens）；
+    文字在前的話前綴在文字就分岔了，圖片永遠進不了共用前綴。
 
     detail 必須每次明確傳入——SDK 的 ResponseInputImageParam.detail 是 Required。
     """
     return [
-        {"type": "input_text", "text": _USER_TEXT},
         {"type": "input_image", "image_url": data_url, "detail": detail},
+        {"type": "input_text", "text": _USER_TEXT},
     ]
 
 
@@ -149,8 +162,8 @@ def build_repair_content(
         f"VALIDATION ERRORS:\n{error_lines}"
     )
     return [
-        {"type": "input_text", "text": text},
         {"type": "input_image", "image_url": data_url, "detail": detail},
+        {"type": "input_text", "text": text},
     ]
 
 
@@ -234,14 +247,15 @@ class VisionCardExtractor:
         return resp.output_parsed
 
     async def extract(self, prepared, cache_key=None) -> CardVisionResult:
-        return await self._respond(build_user_content(prepared.data_url, self.detail), cache_key)
+        return await self._respond(build_user_content(prepared.data_url, self.detail),
+                                   cache_key or _CACHE_KEY)
 
     async def repair(self, prepared, previous: dict, issues: list, raw_text: str,
                      candidates: dict, cache_key=None) -> CardVisionResult:
         return await self._respond(
             build_repair_content(prepared.data_url, previous, issues, raw_text,
                                  candidates, self.detail),
-            cache_key,
+            cache_key or _CACHE_KEY,
         )
 
 
