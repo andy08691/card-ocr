@@ -301,3 +301,71 @@ class TestEmptyEnvVarsAreCleared:
         out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
                              cwd=os.getcwd(), env=env, check=True).stdout.strip()
         assert out == "https://gateway.example.com/v1"
+
+
+class TestNameSpacingNormalization:
+    """名片常把中日韓姓名拉開字距（「李 建 群」），那是版面效果不是名字的一部分。
+
+    但無條件 strip 會毀掉拉丁字母姓名——資料庫裡就有 8 個以上的反例。
+    連語系都不能當判準：Woo Jeong Hong 是韓文名的羅馬拼音，與「강 다 원」同語系
+    卻必須保留空白。判準是**書寫系統**：只有每個 token 都是單一 CJK 字元時才合併。
+    """
+
+    @pytest.mark.parametrize("raw,expected", [
+        # 中日韓字距排版 → 合併（前三筆取自實際辨識結果）
+        ("李 建 群", "李建群"),
+        ("강 다 원", "강다원"),
+        ("賴 盈 榕", "賴盈榕"),
+        ("王 五", "王五"),
+        ("ソ ニ ー", "ソニー"),
+    ])
+    def test_cjk_letterspacing_is_merged(self, raw, expected):
+        assert card_pipeline._normalize_spacing(raw) == expected
+
+    @pytest.mark.parametrize("name", [
+        # 全部取自資料庫真實資料——空白是詞的分界，移掉就毀了
+        "Sophie Smith", "Ari Virtanen", "NANCY HOO", "Afzal Khan",
+        "Woo Jeong Hong", "Ian Christian", "Justin LEE", "Kang · Da Won",
+        "Nguyễn Văn A",
+    ])
+    def test_latin_names_are_never_merged(self, name):
+        assert card_pipeline._normalize_spacing(name) == name
+        assert " " in card_pipeline._normalize_spacing(name)
+
+    def test_japanese_surname_given_space_is_preserved(self):
+        """日文名片「姓　名」的空白是慣例不是排版；token 各兩字，規則自動放過。"""
+        assert card_pipeline._normalize_spacing("黑澤 啟一") == "黑澤 啟一"
+        assert card_pipeline._normalize_spacing("池本　大祐") == "池本　大祐", (
+            "全形空白 U+3000 必須原樣保留——換成半形會改變日文排版語意"
+        )
+
+    def test_only_trims_and_collapses_ascii_runs(self):
+        assert card_pipeline._normalize_spacing("  Sophie   Smith ") == "Sophie Smith"
+        assert card_pipeline._normalize_spacing("廖心渝") == "廖心渝"
+
+    @pytest.mark.parametrize("value,expected", [
+        (None, None),        # 欄位不存在
+        ("", ""),
+        ("   ", ""),         # 只有空白的值 trim 成空字串
+    ])
+    def test_empty_values_are_safe(self, value, expected):
+        assert card_pipeline._normalize_spacing(value) == expected
+
+    def test_applied_to_fuzzy_fields_only(self):
+        """候選型欄位剛被 snap 回名片的表面字串，不能再動；address 的空白是結構性的。"""
+        assert set(card_pipeline._SPACING_FIELDS) == {
+            "person_name", "english_name", "company_name", "job_title"}
+        assert "address" not in card_pipeline._SPACING_FIELDS
+        for f in ("email", "phone", "mobile", "fax", "website"):
+            assert f not in card_pipeline._SPACING_FIELDS
+
+    def test_pipeline_applies_it_without_touching_phone(self):
+        fake = _FakeVision(_result(
+            "李 建 群\n國都汽車股份有限公司\n電話 （04）2326-2888",
+            person_name="李 建 群", company_name="國都汽車股份有限公司",
+            phone="04-2326-2888",
+        ))
+        out = _run(fake)
+        assert out.fields["person_name"] == "李建群"
+        assert out.fields["phone"] == "（04）2326-2888", "snap 的結果不可被空白正規化破壞"
+        assert "李 建 群" in out.raw_text, "raw_text 必須保留未正規化的原樣"

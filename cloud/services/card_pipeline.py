@@ -39,6 +39,7 @@ _drop_regex_blind_spots() 用一條更精準的規則區分兩種情況：
 """
 
 import logging
+import re
 
 from app.services.candidate_extractor import extract_candidates
 from app.services.card_extractor import _snap_candidates
@@ -57,6 +58,39 @@ _CLOUD_OCR_CONFIDENCE = 1.0
 _MEMBERSHIP_MARKER = "not among"
 _PHONE_FIELDS = ("phone", "mobile", "fax")
 _CANDIDATE_FIELDS = ("email", "website", *_PHONE_FIELDS)
+
+# ── 排版字距正規化 ────────────────────────────────────────────────────────────
+# 名片常把中日韓姓名拉開字距排版（「李 建 群」「강 다 원」），那些空白是版面效果、
+# 不是名字的一部分。但**絕不能無條件 strip**——實測資料庫裡就有 8 個以上的拉丁字母
+# 姓名（Sophie Smith、Ian Christian、Woo Jeong Hong…），那裡的空白是詞的分界，
+# 移掉會變成 SophieSmith。連語系也不能當判準：Woo Jeong Hong 是韓文名字的羅馬拼音，
+# 與「강 다 원」同語系卻必須保留空白。判準是**書寫系統**。
+#
+# 規則：只有當「每個空白分隔的 token 都是單一 CJK 字元」時才合併。
+# 漢字／假名／諺文是等寬方塊字，字與字之間插空白純粹是字距排版；
+# 一旦某個 token 有兩字以上，那個空白就可能是真的分隔符——這也自動保護了
+# 日文名片「姓　名」的慣例（「黑澤 啟一」token 各兩字，不會被合併）。
+_CJK_CHAR = re.compile(r"[㐀-鿿豈-﫿぀-ヿ가-힯]")
+
+# 只對「模糊型」文字欄位套用。刻意排除：
+#   - address：空白是結構性的（門牌、樓層、國名之間）
+#   - email / phone / mobile / fax / website：候選型欄位，值必須與名片印刷的表面字串
+#     完全一致，_snap_candidates 的保證與 validator 的比對都靠它
+_SPACING_FIELDS = ("person_name", "english_name", "company_name", "job_title")
+
+# 壓縮 ASCII 空白，但保留全形空白 U+3000——日文名片的「姓　名」用的就是它，
+# 換成半形會改變排版語意。
+_ASCII_WS_RUN = re.compile(r"[^\S　]+")
+
+
+def _normalize_spacing(value):
+    """把排版字距合併掉，同時不動真正的詞分界。純函式，見上方規則說明。"""
+    if not value:
+        return value
+    tokens = value.split()
+    if len(tokens) >= 2 and all(len(t) == 1 and _CJK_CHAR.match(t) for t in tokens):
+        return "".join(tokens)
+    return _ASCII_WS_RUN.sub(" ", value).strip()
 
 
 def _appears_in_transcription(field: str, value: str, raw_text: str) -> bool:
@@ -139,6 +173,15 @@ async def run_cloud_pipeline(prepared, cache_key=None, extractor=None) -> CloudP
         )
 
     fields = _snap_candidates(result.fields.model_dump(), candidates)
+
+    # 排版字距正規化。刻意排在 _snap_candidates 之後，且只碰模糊型欄位——
+    # 候選型欄位剛被 snap 回名片印刷的表面字串，不能再被動到。
+    # 原始未正規化的姓名仍完整保留在 raw_text 裡。
+    for field in _SPACING_FIELDS:
+        normalized = _normalize_spacing(fields.get(field))
+        if normalized != fields.get(field):
+            logger.info("Normalized spacing in %s", field)   # 不記值——PII 不進 log
+            fields[field] = normalized
 
     return CloudPipelineResult(
         fields=fields,
