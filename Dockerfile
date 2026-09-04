@@ -1,3 +1,16 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# ⚠️ DEPRECATED — 請勿使用
+#
+# 這是 PaddleOCR 時代的遺留檔。PaddleOCR 已在 commit 289a37b 移除，
+# requirements.txt 早已沒有它，所以這份檔案「建得起來但跑不動」：
+# 模型下載那段靠 `|| true` 無聲跳過、build 會綠燈，然後 CMD 啟動時在
+# `import app.services.ocr` 炸掉（MinerU 不在映像裡）→ 容器 crash-loop。
+#
+# 正確的入口：
+#   GPU（MinerU + Ollama）：  deploy/Dockerfile        見 deploy/README.md
+#   純 CPU（gpt-5.6-luna）：  deploy/cloud/Dockerfile  見 deploy/cloud/README.md
+# ─────────────────────────────────────────────────────────────────────────────
+
 FROM python:3.10-slim
 
 WORKDIR /app
