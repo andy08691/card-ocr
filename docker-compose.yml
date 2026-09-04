@@ -1,3 +1,19 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# ⚠️ DEPRECATED — 請勿使用
+#
+# 這是 PaddleOCR 時代的遺留檔。PaddleOCR 已在 commit 289a37b 移除，
+# requirements.txt 早已沒有它，所以這份檔案「建得起來但跑不動」：
+# 模型下載那段靠 `|| true` 無聲跳過、build 會綠燈，然後 CMD 啟動時在
+# `import app.services.ocr` 炸掉（MinerU 不在映像裡）→ 容器 crash-loop。
+#
+# 正確的入口：
+#   GPU（MinerU + Ollama）：  deploy/Dockerfile        見 deploy/README.md
+#   純 CPU（gpt-5.6-luna）：  deploy/cloud/Dockerfile  見 deploy/cloud/README.md
+# ─────────────────────────────────────────────────────────────────────────────
+# ⚠️ 這份 compose 還會把正式的 ./card_ocr.db 與 ./media bind-mount 進去，
+# 在 repo 根目錄執行 `docker compose up` 會得到一個掛著正式資料反覆重啟的容器。
+# ─────────────────────────────────────────────────────────────────────────────
+
 services:
   api:
     build: .
