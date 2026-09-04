@@ -41,7 +41,14 @@
 
 ## 2. 安裝與啟動
 
-### 方式 A：Docker（建議）
+> **驗證狀態**（2026-09-04）：方式 B 已在乾淨環境完整驗證——從版控取出原始碼、
+> 建立新的 venv、依 `requirements.txt` 安裝、填入金鑰、啟動、實際辨識成功，
+> 環境為 macOS + Python 3.14.4。
+> **方式 A（Docker）的映像尚未實際建置過**，Dockerfile 的 COPY 清單以等效方式驗證
+> （在暫存目錄複製相同檔案後執行同樣的 import 檢查），但 `docker build` 本身未跑過。
+> 若貴司走 Docker 路線遇到問題，方式 B 是已驗證的退路。
+
+### 方式 A：Docker
 
 ```bash
 # 在專案根目錄
@@ -55,7 +62,7 @@ curl http://localhost:8100/health
 映像約 250MB。資料（上傳的原圖 + SQLite）落在 `deploy/cloud/data/`，
 已設為 volume，容器重建不會遺失。
 
-### 方式 B：直接跑
+### 方式 B：直接跑（已驗證）
 
 ```bash
 python3 -m venv .venv_cloud                      # 或 uv venv --python 3.12 .venv_cloud
@@ -175,7 +182,12 @@ Base URL：`http://<host>:8100`
 
 | 欄位 | 型別 | 說明 |
 |---|---|---|
-| `file` | file | 名片圖片。支援 `image/jpeg`、`image/png`、`image/webp`；安裝了 `pillow-heif` 時另支援 `image/heic`、`image/heif`（iPhone 原生格式）。上限 20 MiB |
+| `file` | file | 名片圖片。支援 `image/jpeg`、`image/png`、`image/webp`；安裝了 `pillow-heif` 時另支援 `image/heic`、`image/heif`。上限 20 MiB |
+
+> **關於 HEIC**：iPhone 雖以 HEIC 拍攝，但**透過網頁表單上傳時 iOS 會自動轉成 JPEG**，
+> 所以瀏覽器情境不會用到 HEIC 路徑（實測 iPhone 上傳收到的是 `image.jpg`）。
+> 只有貴司用原生 App 直接送原始 `.heic` 檔時才會走到——該路徑已用合成檔案測過，
+> 但尚未經真實 iPhone 檔驗證。
 
 **Response 200** — `application/json`
 
@@ -422,7 +434,10 @@ async function scanCard(path, baseUrl = "http://localhost:8100") {
 | 情境 | 每張 | 100 張/天 | 200 張/天 |
 |---|---:|---:|---:|
 | 掃描圖 / 小尺寸照片 | 約 US$0.0009 | 約 US$2.6/月 | 約 US$5.2/月 |
-| 手機實拍（縮到 2048px） | 約 US$0.0016 | 約 US$4.7/月 | 約 US$9.3/月 |
+| 手機實拍（縮到 2048px） | 約 US$0.0015 | 約 US$4.6/月 | 約 US$9.2/月 |
+
+實測一張 iPhone 直拍（3024×4032、1.77MB）：縮為 1536×2048、image tokens 3,686、
+`in=5110 out=209`、7.2 秒、**US$0.00153**。
 
 只有 `POST /api/cards/upload` 會產生費用；`GET` / `PUT` / `/health` 都不會。
 
