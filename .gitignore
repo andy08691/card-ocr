@@ -1,6 +1,7 @@
 __pycache__/
 *.py[cod]
 .env
+.env.cloud
 media/
 card_ocr.db
 .venv/
@@ -13,3 +14,4 @@ build/
 .claude/
 build.log
 .venv_mineru/
+.venv_cloud/

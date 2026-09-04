@@ -1,0 +1,21 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# deploy/cloud/requirements.txt — 雲端管線的部署依賴（純 CPU）
+#
+# 與根目錄 requirements.txt 分開，而且根目錄那份「不得更動」：
+# 把 openai / pillow-heif 加進去會推進 GPU 映像和每個開發 venv。
+#
+# 這裡釘版本（根目錄那份刻意不釘），因為這個檔就是部署產物本身。
+# ─────────────────────────────────────────────────────────────────────────────
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+python-multipart==0.0.32
+sqlalchemy==2.0.52
+python-dotenv==1.2.3
+pillow==12.3.0
+pillow-heif==1.6.0          # HEIC 解碼（iPhone 原生格式）；不裝則自動關閉 HEIC 支援
+openai==2.54.0
+
+# 刻意不含：mineru / torch / opencc / ollama —— 雲端管線一個都用不到。
+# app/ 那邊會被 import 的模組（schemas / models / database / parser /
+# candidate_extractor / validator / card_extractor）只需要 pydantic + sqlalchemy，
+# 兩者都已由上面帶入。

@@ -9,6 +9,7 @@ media/
 out_smoke/
 scratchpad/
 .env
+.env.cloud
 .claude/
 build.log
 test/

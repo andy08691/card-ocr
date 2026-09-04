@@ -1,0 +1,33 @@
+# deploy/cloud/docker-compose.yml — 雲端管線（純 CPU，任何 VPS 可跑）
+#
+#   cp ../../.env.cloud.example ../../.env.cloud   # 填入 OPENAI_API_KEY
+#   docker compose -f deploy/cloud/docker-compose.yml up -d --build
+services:
+  card-ocr-cloud:
+    build:
+      context: ../..
+      dockerfile: deploy/cloud/Dockerfile
+    image: card-ocr-cloud:latest
+    restart: unless-stopped
+    ports:
+      - "${CLOUD_PORT:-8100}:8100"
+    env_file:
+      - ../../.env.cloud
+    environment:
+      # MEDIA_DIR 保持「相對路徑」配 WORKDIR=/app，這樣存進 DB 的 image_path
+      # 仍是 media/cloud/xxx.jpg，與本機管線的契約完全一致。
+      # 改成絕對路徑 /data/media 會讓 image_path 變成 /data/media/... 而破壞一致性。
+      - MEDIA_DIR=media
+      - DATABASE_URL=sqlite:////data/card_ocr.db
+      - CLOUD_PORT=8100
+    volumes:
+      - ./data/media:/app/media
+      - ./data:/data
+    healthcheck:
+      # python:3.12-slim 沒有 curl；而且只打 /health（純查 DB），
+      # 絕不打 /health/provider——那會對 provider 產生每 30 秒一次的無謂請求。
+      test: ["CMD", "python", "-c",
+             "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8100/health').read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
