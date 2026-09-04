@@ -1,5 +1,9 @@
 # 雲端部署包（gpt-5.6-luna，無需 GPU）
 
+> **要交付給外部團隊自行架設？** 請給他們 [`INTEGRATION.md`](INTEGRATION.md)
+> ——那份是自給自足的整合指南（安裝、API 契約、串接注意事項、安全與法遵），
+> 讀者不需要看本專案的其他文件。本文件則是給專案維護者的部署細節。
+
 把名片照片直接交給 **OpenAI `gpt-5.6-luna`**（vision + Structured Outputs）辨識，
 不需要 MinerU、Ollama、vLLM，也不需要 GPU。一台普通 CPU VPS 就能跑。
 

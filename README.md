@@ -196,6 +196,7 @@ docker compose -f deploy/cloud/docker-compose.yml up -d --build
 ```
 
 完整環境變數、隱私措施、成本表與已知限制見 [`deploy/cloud/README.md`](deploy/cloud/README.md)；
+**要交付給外部團隊自行架設**請給 [`deploy/cloud/INTEGRATION.md`](deploy/cloud/INTEGRATION.md)（自給自足的整合指南）；
 12 張全批實測數據見 [`deploy/benchmarks.md`](deploy/benchmarks.md) §C。
 兩條管線可同時跑：埠（8000 / 8100）、env 檔（`.env` / `.env.cloud`）、
 圖片目錄（`media/` / `media/cloud/`）都分開；`stop.sh` 只清 port 8000，不會誤殺雲端 server。
