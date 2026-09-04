@@ -2,10 +2,31 @@
 
 接收名片圖片，自動識別並回傳結構化聯絡資訊的後台 API。
 
-架構分兩層：**MinerU（OCR，把圖片轉成文字＋版面座標）** → **欄位擷取（把文字歸到 10 個欄位）**。
-欄位擷取預設走「**candidate（regex 找候選）→ 本地 LLM 分類 → validator 驗證 → 最多 1 次 repair**」，
-LLM 跑在本機 Ollama，**名片個資（姓名 / 電話 / Email / 地址）完全不離開本機**；LLM 失敗時自動
-退回純 regex parser。可用 `CARD_EXTRACTOR=regex` 一鍵切回舊版純 regex。
+**提供兩條管線，API 契約完全相同**（同樣的端點、同樣的 10 個欄位、同一張 `cards` 資料表），
+前端只要換 base URL 就能切換：
+
+| | 雲端管線（`cloud/`） | 本機管線（`app/`） |
+|---|---|---|
+| 辨識引擎 | OpenAI `gpt-5.6-luna`（vision + Structured Outputs） | MinerU VLM + 本機 Ollama `qwen3:4b` |
+| 硬體 | 任何 CPU VPS | 需要 GPU 才有堪用速度 |
+| 速度 | **實測 ~6.0s/張**（3.0–9.0s） | GPU(L4) ~5s、Mac(MLX) ~17s |
+| 成本 | **實測 NT$0.038/張**（手機實拍推估 ~NT$0.05）<br>200 張/天 ≈ US$7–9/月 | GPU 機 NT$57,000 前期 + NT$1,000–1,500/月 |
+| 預設埠 | 8100 | 8000 |
+| **個資** | ⚠️ **縮圖後的名片影像會送到 OpenAI** | ✅ **完全不離開本機** |
+
+- **雲端管線**適合絕大多數情境：零硬體、零模型下載、零暖機。啟動見
+  [`deploy/cloud/README.md`](deploy/cloud/README.md)。
+  預設 `store=false`（不留存於 provider 端）、只送縮圖、log 不記 PII，
+  但**個資確實會離開本機**——使用前須在隱私政策與委外契約中揭露，
+  台灣《個資法》的跨境傳輸告知義務請自行確認。
+- **本機管線**保留給隱私敏感、離線、或日後 GPU 降價的情境。
+  架構分兩層：**MinerU（OCR，把圖片轉成文字＋版面座標）** → **欄位擷取（把文字歸到 10 個欄位）**。
+  欄位擷取預設走「**candidate（regex 找候選）→ 本地 LLM 分類 → validator 驗證 → 最多 1 次 repair**」，
+  LLM 跑在本機 Ollama，**名片個資（姓名 / 電話 / Email / 地址）完全不離開本機**；LLM 失敗時自動
+  退回純 regex parser。可用 `CARD_EXTRACTOR=regex` 一鍵切回舊版純 regex。
+
+以下說明若未特別標示，皆指**本機管線**；雲端管線的安裝、設定與部署集中在
+[`deploy/cloud/README.md`](deploy/cloud/README.md)。
 
 ## 功能
 
@@ -20,10 +41,14 @@ LLM 跑在本機 Ollama，**名片個資（姓名 / 電話 / Email / 地址）�
 - 儲存原圖與解析結果至本機
 - 提供修正 API，供前端使用者手動修改欄位
 - 可掛雲端 / 自建 GPU 部署，單張約 5–10 秒（見 `deploy/`）
+- **免 GPU 的雲端管線**：`gpt-5.6-luna` 直接讀照片，同樣的 API 契約
+  （手機拍照自動 EXIF 轉正、支援 iPhone HEIC、送出前縮圖，見 `deploy/cloud/`）
 
 ---
 
-## 環境需求
+## 環境需求（本機管線）
+
+> 雲端管線只需要 Python 3.10+ 與一把 OpenAI API key，沒有以下任何一項需求。
 
 - OCR 引擎：**MinerU 3.x**（OpenDataLab）
 - 欄位擷取 LLM：**Ollama**（本機 server）+ 模型 `qwen3:4b`（約 2.5GB；`CARD_EXTRACTOR=regex` 時不需要）
@@ -37,7 +62,7 @@ LLM 跑在本機 Ollama，**名片個資（姓名 / 電話 / Email / 地址）�
 
 ---
 
-## 安裝步驟
+## 安裝步驟（本機管線）
 
 ### 1. 建立虛擬環境（Python 3.10–3.13）
 
@@ -154,6 +179,26 @@ bash stop.sh
 ```
 
 **Windows：** 直接關閉終端機視窗，或按 `Ctrl+C`
+
+### 雲端管線部署（無需 GPU，推薦）
+
+```bash
+uv venv --python 3.12 .venv_cloud
+VIRTUAL_ENV=.venv_cloud uv pip install -r deploy/cloud/requirements.txt
+cp .env.cloud.example .env.cloud     # 填入 OPENAI_API_KEY
+bash start.cloud.sh                  # → http://0.0.0.0:8100
+```
+
+或用 Docker（約 250MB 的純 CPU 映像）：
+
+```bash
+docker compose -f deploy/cloud/docker-compose.yml up -d --build
+```
+
+完整環境變數、隱私措施、成本表與已知限制見 [`deploy/cloud/README.md`](deploy/cloud/README.md)；
+12 張全批實測數據見 [`deploy/benchmarks.md`](deploy/benchmarks.md) §C。
+兩條管線可同時跑：埠（8000 / 8100）、env 檔（`.env` / `.env.cloud`）、
+圖片目錄（`media/` / `media/cloud/`）都分開；`stop.sh` 只清 port 8000，不會誤殺雲端 server。
 
 ### GPU 雲端 / 自建部署（~5 秒/張）
 
@@ -313,8 +358,22 @@ card_ocr/
 │   ├── test_ocr_adapter.py        # MinerU content_list → boxes adapter 測試（無需模型）
 │   ├── test_candidate_extractor.py # 候選擷取：聯集去重（離線）
 │   ├── test_validator.py          # validator 各規則（離線）
-│   └── test_llm_extract.py        # LLM 契約 / prompt（mock Ollama，離線）
+│   ├── test_llm_extract.py        # LLM 契約 / prompt（mock Ollama，離線）
+│   ├── test_cloud_image_prep.py   # ★ 縮圖 / EXIF / 去 alpha（離線）
+│   ├── test_cloud_vision.py       # ★ 雲端 prompt / strict schema / 錯誤映射（離線）
+│   └── test_cloud_pipeline.py     # ★ 雲端 workflow（依賴注入，離線）
+├── cloud/               # ★ 雲端管線（gpt-5.6-luna，無需 GPU）
+│   ├── config.py        # 環境變數集中處；必須第一個 import（負責載入 .env.cloud）
+│   ├── main.py          # FastAPI 入口（cloud.main:app，預設 port 8100）
+│   ├── routers/cards.py # 與 app/ 完全相同的端點與回應格式
+│   ├── schemas/vision.py       # CardVisionResult＝raw_text + CardExtraction（10 欄位沿用 app/）
+│   └── services/
+│       ├── image_prep.py       # EXIF 轉正 / 白底去 alpha / 縮到 2048 / JPEG 階梯（不動原檔）
+│       ├── vision_extractor.py # Structured Outputs 呼叫、prompt、provider 錯誤映射
+│       ├── card_pipeline.py    # vision → 重用 candidate/validator/snap 二次把關
+│       └── retention.py        # 原圖保留天數清理（只掃 media/cloud/）
 ├── deploy/              # GPU 部署包（Dockerfile / Lightning / Beam；見 deploy/README.md）
+│   └── cloud/           # ★ 雲端部署包（純 CPU Dockerfile / compose；見 deploy/cloud/README.md）
 ├── media/               # 上傳的名片圖片（git 忽略）
 ├── card_ocr.db          # SQLite 資料庫（git 忽略）
 ├── .venv_mineru/        # MinerU 虛擬環境（git 忽略）
@@ -322,8 +381,10 @@ card_ocr/
 ├── start.sh                 # 正式啟動腳本（macOS / Linux）
 ├── start.bat                # 正式啟動腳本（Windows）
 ├── stop.sh                  # 關閉 port 8000 的腳本（macOS / Linux）
-├── .env.example             # 環境變數範本
-└── .env                     # 環境設定（git 忽略）
+├── .env.example             # 本機管線的環境變數範本
+├── .env.cloud.example       # ★ 雲端管線的環境變數範本
+├── start.cloud.sh           # ★ 雲端管線啟動腳本
+└── .env / .env.cloud        # 環境設定（皆 git 忽略）
 ```
 
 ---
@@ -342,6 +403,14 @@ VIRTUAL_ENV=.venv_mineru uv pip install pytest   # 首次需安裝
 - `test_candidate_extractor.py` — 候選擷取的聯集去重
 - `test_validator.py` — validator 各規則（membership / 衝突 / 軟檢查）
 - `test_llm_extract.py` — LLM 契約與 prompt（mock 掉 Ollama 呼叫）
+- `test_cloud_image_prep.py` — 雲端前處理：白底去 alpha、EXIF 轉正、縮圖、JPEG 品質階梯
+- `test_cloud_vision.py` — 雲端 prompt 的承重規則、SDK strict schema、provider 錯誤 → HTTP 映射
+- `test_cloud_pipeline.py` — 雲端 workflow（用依賴注入假造模型回應，零網路零花費）
+
+> 雲端測試需要 `openai` 與 `pillow-heif`：
+> `VIRTUAL_ENV=.venv_mineru uv pip install openai pillow-heif`。
+> 反過來，乾淨的 `.venv_cloud` 只能跑 `pytest tests/test_cloud_*.py`——
+> `test_ocr_adapter.py` 會 import `app.services.ocr` → `opencc`。
 
 ---
 
@@ -409,6 +478,21 @@ sqlite3 card_ocr.db "ALTER TABLE cards ADD COLUMN fax TEXT;"
 - 速度依硬體差異大：Mac(MLX) 約 10–30 秒/張、GPU(vLLM) 約 5–10 秒/張，呼叫端請設定足夠逾時
 - `ocr_confidence` 在 MinerU 下固定為 `1.0`（content_list 不提供 per-box 分數），此欄位僅為相容保留、不代表實際信心度
 - MinerU 中文 OCR 可能輸出簡體，已用 OpenCC `s2twp` 轉繁；日文等非中文名片的漢字可能被過度轉換
+### 雲端管線（`cloud/`）
+
+- **沒有 fallback**：本機管線的 OCR 與分類是分開兩段，LLM 掛了還能退回 regex；
+  雲端一次呼叫同時做兩件事，provider 掛了就連文字都沒有。**provider 可用性 = 管線可用性。**
+- **驗證是「自我一致性」而非跨引擎交叉檢查**：`raw_text` 由同一個模型產生，幻覺是相關的。
+  仍抓得到格式漂移、轉錄漏抄、跨欄位重複、整段捏造，但強度不如 MinerU + Ollama 雙引擎。
+- **不做繁簡轉換**：照卡片印刷原樣輸出，簡體名片會存簡體。這是刻意的保真度取捨
+  ——本機管線的 OpenCC `s2twp` 會過度轉換日文漢字（見下），雲端沒有這個問題。
+- **regex 候選是台灣導向的**：外國電話格式常抓不到候選。管線用「值有沒有出現在轉錄裡」
+  區分「regex 認不得格式」與「模型漏抄」，避免對外國名片產生系統性誤報。
+- **兩條管線寫同一個 SQLite 可能撞鎖**：100–200 張/天 機率極低；要隔離就在 `.env.cloud`
+  設不同的 `DATABASE_URL`，要共用則跑一次 `sqlite3 card_ocr.db "PRAGMA journal_mode=WAL;"`。
+
+### 本機管線（`app/`）
+
 - **LLM 分類受模型大小影響**：`qwen3:4b` 偶爾會漏分某些帶標籤的號碼（實測全形括號的市話
   `電話（04）…` 有時未歸到 `phone`）；validator 只驗值不強制補齊，此類分類缺口需靠更大模型或
   prompt 微調改善（Phase 2 評測另案）。急用可 `CARD_EXTRACTOR=regex` 回退，或前端提供欄位修正。
